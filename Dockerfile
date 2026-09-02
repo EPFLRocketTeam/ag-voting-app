@@ -23,6 +23,6 @@ ENV NODE_ENV=production
 # The app reads PORT from the environment (defaulting to 3000 if unset —
 # see server.js) — Dokploy can override this, or leave it as-is and map
 # port 3000 in its dashboard.
-EXPOSE 3000
+EXPOSE 3003
 
 CMD ["node", "server.js"]
