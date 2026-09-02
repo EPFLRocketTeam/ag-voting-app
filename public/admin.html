@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vote AG — Admin</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <!-- Écran PIN — affiché tant que le présentateur n'a pas entré le bon code -->
+  <div id="pin-screen" class="centered-screen">
+    <div class="container" style="max-width: 360px;">
+      <div class="brand-header" style="border-bottom: none; justify-content: center;">
+        <div class="brand-logo"><img src="/assets/logo.png" alt="EPFL Rocket Team" /></div>
+        <div class="brand-title">
+          <h1>Vote AG — Admin</h1>
+          <p>EPFL Rocket Team</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="field">
+          <label for="pin-input">PIN administrateur</label>
+          <input type="password" id="pin-input" placeholder="Entrez le code PIN" autocomplete="off" />
+        </div>
+        <button id="pin-submit" class="btn-primary btn-block">Déverrouiller</button>
+        <p id="pin-error" class="error-text hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panneau principal — affiché une fois le PIN vérifié -->
+  <div id="dashboard" class="container hidden">
+    <div class="brand-header">
+      <div class="brand-logo"><img src="/assets/logo.png" alt="EPFL Rocket Team" /></div>
+      <div class="brand-title">
+        <h1>Vote AG — Admin</h1>
+        <p id="connection-status" class="muted">Connexion…</p>
+      </div>
+    </div>
+
+    <!-- Question actuellement ouverte — compteur uniquement, pas de détail par choix -->
+    <div id="live-section" class="hidden">
+      <div class="card" style="border-color: var(--color-accent);">
+        <span class="badge badge-open">En direct</span>
+        <h2 id="live-question-text" style="margin: 10px 0 4px;"></h2>
+        <p class="muted" style="margin: 0 0 16px;">Le détail par choix n'est révélé qu'à la fermeture du vote.</p>
+        <div class="live-count-number" id="live-vote-count">0</div>
+        <div class="muted" id="live-vote-count-label">vote reçu</div>
+        <div class="btn-row" style="margin-top: 20px;">
+          <button id="close-question-btn" class="btn-danger">Fermer la question</button>
+        </div>
+      </div>
+      <hr class="divider" />
+    </div>
+
+    <!-- Formulaire de création / modification -->
+    <div class="card">
+      <h2 id="form-title" style="margin-top: 0;">Nouvelle question</h2>
+      <div class="field">
+        <label for="question-text">Question</label>
+        <input type="text" id="question-text" placeholder="ex. Approuver le budget 2026 ?" />
+      </div>
+      <div class="field">
+        <label for="question-type">Type</label>
+        <select id="question-type">
+          <option value="standard">Standard (Oui / Non / Blanc)</option>
+          <option value="custom">Personnalisé</option>
+        </select>
+      </div>
+      <div class="field hidden" id="options-field">
+        <label>Options</label>
+        <div id="options-list"></div>
+        <button id="add-option-btn" class="btn-secondary" type="button" style="margin-top: 4px;">+ Ajouter une option</button>
+      </div>
+      <div class="btn-row">
+        <button id="save-question-btn" class="btn-primary">Ajouter la question</button>
+        <button id="cancel-edit-btn" class="btn-secondary hidden" type="button">Annuler</button>
+      </div>
+      <p id="form-error" class="error-text hidden"></p>
+    </div>
+
+    <hr class="divider" />
+
+    <h2>Questions</h2>
+    <p id="questions-empty" class="muted hidden">Aucune question pour l'instant — ajoutez-en une ci-dessus.</p>
+    <div id="questions-list"></div>
+
+    <hr class="divider" />
+
+    <!-- Procurations : liens personnels à poids de vote, générés à partir de la liste privée du président -->
+    <h2>Procurations</h2>
+    <p class="muted">
+      Pour une personne qui vote aussi pour d'autres (procuration), crée ici un lien personnel avec le bon
+      nombre de voix — à envoyer uniquement à cette personne, en privé. Le lien de vote public normal
+      compte toujours pour 1 voix, quoi qu'il arrive.
+    </p>
+    <div class="card">
+      <div class="field">
+        <label for="voter-name">Nom</label>
+        <input type="text" id="voter-name" placeholder="ex. Alice Dupont (2 procurations)" />
+      </div>
+      <div class="field">
+        <label for="voter-weight">Poids (nombre de voix, elle/lui-même inclus)</label>
+        <input type="text" id="voter-weight" placeholder="ex. 3" inputmode="numeric" />
+      </div>
+      <button id="create-voter-btn" class="btn-primary">Créer le lien</button>
+      <p id="voter-form-error" class="error-text hidden"></p>
+    </div>
+
+    <div id="voters-list" style="margin-top: 16px;"></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>

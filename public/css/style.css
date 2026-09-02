@@ -1,0 +1,365 @@
+/* style.css — shared styles for admin.html and voter.html.
+   Brand colors sampled from the EPFL Rocket Team logo: the red (#b92a30)
+   and near-black (#010207). Page background is white per Nikita's note —
+   the black in the logo file is just the logo's own badge background, not
+   a cue for the page itself. */
+
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-text: #111214;
+  --color-text-muted: #5b5f66;
+  --color-border: #e4e4e7;
+  --color-border-strong: #c7c7cc;
+
+  --color-accent: #b92a30;       /* brand red */
+  --color-accent-dark: #8f1f24;  /* hover/active */
+  --color-accent-tint: #fbe9ea;  /* light red background, e.g. selected state */
+  --color-black: #0a0a0c;        /* logo badge background */
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px 16px 64px;
+}
+
+/* ---------- header / brand ---------- */
+
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0 24px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 24px;
+}
+
+.brand-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--color-black);
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.brand-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.brand-title h1 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.brand-title p {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 2px 0 0;
+}
+
+/* ---------- buttons ---------- */
+
+button {
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-dark);
+}
+
+.btn-secondary {
+  background: #fff;
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--color-text);
+}
+
+.btn-danger {
+  background: #fff;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-accent-tint);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- form controls ---------- */
+
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+input[type="text"],
+input[type="password"],
+select {
+  width: 100%;
+  font-family: inherit;
+  font-size: 16px; /* 16px avoids iOS auto-zoom on focus */
+  padding: 11px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--color-text);
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-tint);
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+/* ---------- cards ---------- */
+
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  background: var(--color-surface);
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+/* ---------- status badge ---------- */
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.badge-draft { background: #f0f0f2; color: var(--color-text-muted); }
+.badge-open { background: var(--color-accent-tint); color: var(--color-accent-dark); }
+.badge-closed { background: #ececec; color: #444; }
+
+/* ---------- results bars ---------- */
+
+.results-total {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-bottom: 10px;
+}
+
+.result-row {
+  margin-bottom: 10px;
+}
+
+.result-row-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.result-row-label .count {
+  color: var(--color-text-muted);
+}
+
+.result-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: #f0f0f2;
+  overflow: hidden;
+}
+
+.result-bar-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* ---------- misc ---------- */
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.error-text {
+  color: var(--color-accent);
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.centered-screen {
+  min-height: 80vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+hr.divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 24px 0;
+}
+
+/* ---------- live vote count (breakdown hidden while open) ---------- */
+
+.live-count-number {
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--color-accent);
+}
+
+/* ---------- procurations / voters list ---------- */
+
+.voter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.voter-row:last-child {
+  border-bottom: none;
+}
+
+.voter-info .name {
+  font-weight: 600;
+}
+.voter-info .weight {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* ---------- voter page ---------- */
+
+.proxy-banner {
+  background: var(--color-accent-tint);
+  color: var(--color-accent-dark);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.waiting-state {
+  text-align: center;
+  padding: 60px 16px;
+  color: var(--color-text-muted);
+}
+.waiting-state .brand-logo {
+  margin: 0 auto 20px;
+}
+.waiting-state h2 {
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.choice-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  color: var(--color-text);
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+.choice-btn:active {
+  transform: scale(0.99);
+}
+.choice-btn.selected {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+.choice-btn:disabled {
+  opacity: 0.6;
+}
+
+.vote-status {
+  min-height: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-accent);
+  margin: 12px 0 4px;
+}
+
+.closed-state {
+  text-align: center;
+  padding: 48px 16px;
+}

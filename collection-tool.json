@@ -1,0 +1,264 @@
+{
+  "info": {
+    "name": "AG Voting Tool",
+    "description": "Manual test collection for the EPFL Rocket Team AG voting tool API. Point {{baseUrl}} at your local server (default http://localhost:3000) or, later, the real deployed URL. Updated for the standard(Oui/Non/Blanc)/custom question types, hidden-while-open results, and weighted procuration voting.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "adminPin", "value": "rocket2026" },
+    { "key": "questionId", "value": "" },
+    { "key": "customQuestionId", "value": "" },
+    { "key": "voterToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/health"
+      }
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Verify PIN",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/api/admin/verify",
+            "body": { "mode": "raw", "raw": "{\n  \"pin\": \"{{adminPin}}\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Questions (admin)",
+      "item": [
+        {
+          "name": "Create standard question (Oui/Non/Blanc)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.id) { pm.collectionVariables.set('questionId', data.id); }",
+                  "pm.test('status is 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-admin-token", "value": "{{adminPin}}" }
+            ],
+            "url": "{{baseUrl}}/api/questions",
+            "body": { "mode": "raw", "raw": "{\n  \"text\": \"Approuver le budget 2026 ?\",\n  \"type\": \"standard\"\n}" }
+          }
+        },
+        {
+          "name": "Create custom question",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.id) { pm.collectionVariables.set('customQuestionId', data.id); }",
+                  "pm.test('status is 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-admin-token", "value": "{{adminPin}}" }
+            ],
+            "url": "{{baseUrl}}/api/questions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Choisir la date de la prochaine AG\",\n  \"type\": \"custom\",\n  \"options\": [\"8 sept\", \"9 sept\", \"10 sept\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "List all questions",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/questions" }
+        },
+        {
+          "name": "Get one question",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/questions/{{questionId}}" }
+        },
+        {
+          "name": "Edit question (only while draft)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-admin-token", "value": "{{adminPin}}" }
+            ],
+            "url": "{{baseUrl}}/api/questions/{{questionId}}",
+            "body": { "mode": "raw", "raw": "{\n  \"text\": \"Approuver le budget révisé 2026 ?\"\n}" }
+          }
+        },
+        {
+          "name": "Open question",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "x-admin-token", "value": "{{adminPin}}" }],
+            "url": "{{baseUrl}}/api/questions/{{questionId}}/open"
+          }
+        },
+        {
+          "name": "Get live vote count (no breakdown, safe while open)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/questions/{{questionId}}/vote-count" }
+        },
+        {
+          "name": "Get full results (breakdown — only meaningful once closed)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/questions/{{questionId}}/results" }
+        },
+        {
+          "name": "Close question",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "x-admin-token", "value": "{{adminPin}}" }],
+            "url": "{{baseUrl}}/api/questions/{{questionId}}/close"
+          }
+        },
+        {
+          "name": "Delete question (only while draft)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-admin-token", "value": "{{adminPin}}" }],
+            "url": "{{baseUrl}}/api/questions/{{questionId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Procurations (admin)",
+      "item": [
+        {
+          "name": "Create proxy voter (name + weight)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.token) { pm.collectionVariables.set('voterToken', data.token); }",
+                  "pm.test('status is 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-admin-token", "value": "{{adminPin}}" }
+            ],
+            "url": "{{baseUrl}}/api/voters",
+            "body": { "mode": "raw", "raw": "{\n  \"displayName\": \"Alice Dupont (2 procurations)\",\n  \"weight\": 3\n}" }
+          }
+        },
+        {
+          "name": "List proxy voters",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-admin-token", "value": "{{adminPin}}" }],
+            "url": "{{baseUrl}}/api/voters"
+          }
+        },
+        {
+          "name": "Revoke proxy voter",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-admin-token", "value": "{{adminPin}}" }],
+            "url": "{{baseUrl}}/api/voters/{{voterToken}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voting (public)",
+      "item": [
+        {
+          "name": "Cast vote — anonymous, device A votes Oui",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/api/vote",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questionId\": \"{{questionId}}\",\n  \"voterId\": \"{{$guid}}\",\n  \"choice\": \"Oui\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Cast vote — anonymous, device B votes Non",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/api/vote",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questionId\": \"{{questionId}}\",\n  \"voterId\": \"{{$guid}}\",\n  \"choice\": \"Non\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Cast vote — proxy token (counts for its configured weight)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/api/vote",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questionId\": \"{{questionId}}\",\n  \"token\": \"{{voterToken}}\",\n  \"choice\": \"Oui\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Cast vote — custom question",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/api/vote",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questionId\": \"{{customQuestionId}}\",\n  \"voterId\": \"{{$guid}}\",\n  \"choice\": \"8 sept\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Cast vote — fake token (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/api/vote",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questionId\": \"{{questionId}}\",\n  \"token\": \"not-a-real-token\",\n  \"choice\": \"Oui\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Export",
+      "item": [
+        {
+          "name": "Get final results (all questions)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/export/results" }
+        }
+      ]
+    }
+  ]
+}

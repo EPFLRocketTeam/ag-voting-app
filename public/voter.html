@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vote AG</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <div class="container" style="max-width: 480px;">
+    <div class="brand-header">
+      <div class="brand-logo"><img src="/assets/logo.png" alt="EPFL Rocket Team" /></div>
+      <div class="brand-title">
+        <h1>Vote AG</h1>
+        <p id="connection-status" class="muted">EPFL Rocket Team</p>
+      </div>
+    </div>
+
+    <!-- Bannière d'identité — visible uniquement avec un lien de procuration -->
+    <div id="proxy-banner" class="proxy-banner hidden"></div>
+
+    <!-- Lien de procuration invalide -->
+    <div id="invalid-token-state" class="hidden">
+      <div class="card" style="border-color: var(--color-accent);">
+        <h2 style="margin-top: 0;">Lien invalide</h2>
+        <p class="muted">Ce lien de vote n'est pas valide. Contacte le président si tu penses que c'est une erreur.</p>
+      </div>
+    </div>
+
+    <!-- En attente d'une question ouverte -->
+    <div id="waiting-state" class="waiting-state hidden">
+      <div class="brand-logo" style="width: 56px; height: 56px;"><img src="/assets/logo.png" alt="" /></div>
+      <h2>En attente…</h2>
+      <p>La prochaine question apparaîtra ici dès qu'elle sera ouverte.</p>
+    </div>
+
+    <!-- Question ouverte — vote -->
+    <div id="voting-state" class="hidden">
+      <div class="card">
+        <h2 id="question-text" style="margin-top: 0;"></h2>
+        <div id="choices"></div>
+        <p id="vote-status" class="vote-status"></p>
+      </div>
+    </div>
+
+    <!-- Question tout juste fermée -->
+    <div id="closed-state" class="closed-state hidden">
+      <h2>Vote terminé</h2>
+      <p class="muted">Merci d'avoir participé. En attente de la prochaine question…</p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/voter.js"></script>
+</body>
+</html>
