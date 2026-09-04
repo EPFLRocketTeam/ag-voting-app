@@ -1,3 +1,19 @@
+// server.js — REST API + realtime broadcast for the AG voting tool.
+//
+// Design: plain REST endpoints do the actual state changes (create/open/close
+// a question, cast a vote); each handler then emits a Socket.IO event so
+// every connected browser (admin dashboard, every voter's phone) updates
+// live without polling. Sockets are push-only here — no vote is ever cast
+// over a socket, only broadcast through one, which keeps the "what changed
+// the database" logic in one place (the REST handlers).
+//
+// Proxy ("procuration") voting: a normal voter is anonymous (random id
+// generated client-side, always worth 1 vote). A proxy holder instead uses a
+// personal link containing a token the admin generated for them from the
+// President's private list; the vote weight tied to that token lives only
+// in the `voters` table and is looked up server-side — a client can never
+// claim extra weight for itself, whatever it sends.
+
 require('dotenv').config();
 const path = require('path');
 const express = require('express');
@@ -6,8 +22,8 @@ const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const { pool, init } = require('./db');
 
-const PORT = process.env.PORT || 3003;
-const ADMIN_PIN = process.env.ADMIN_PIN;
+const PORT = process.env.PORT;
+const ADMIN_PIN = process.env.ADMIN_PIN || 'rocket2026'; // set a real one in .env before deploying
 
 const app = express();
 const server = http.createServer(app);
@@ -15,6 +31,14 @@ const io = new Server(server);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// The bare root URL (what people actually get sent — "vote.epfl-rocket-team.ch",
+// not "…/voter.html") has no matching static file (no public/index.html), so
+// without this it 404s. Voters are the intended audience at "/"; the admin
+// panel stays reachable only at its own explicit /admin.html.
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'voter.html'));
+});
 
 // Wrap async route handlers so a thrown/rejected error reaches Express's
 // error middleware instead of crashing the process or hanging the request.
@@ -189,10 +213,30 @@ app.delete(
   wrap(async (req, res) => {
     const q = await getQuestion(req.params.id);
     if (!q) return res.status(404).json({ error: 'Question introuvable.' });
-    if (q.status !== 'draft') {
-      return res.status(400).json({ error: 'Seules les questions en brouillon peuvent être supprimées.' });
+    // Draft or closed can be deleted (e.g. to clear out test questions after
+    // a dry run) — only an OPEN question is blocked, since deleting one
+    // mid-vote out from under connected voters would be genuinely confusing.
+    if (q.status === 'open') {
+      return res.status(400).json({ error: 'Ferme la question avant de la supprimer.' });
     }
-    await pool.query('DELETE FROM questions WHERE id = $1', [q.id]);
+    // votes.question_id references questions(id) without ON DELETE CASCADE,
+    // so a closed question with votes attached must have them removed first
+    // — otherwise Postgres rejects the delete with a foreign key violation.
+    // Both deletes run in one transaction so we never end up with votes
+    // orphaned by a question that got deleted (or vice versa) if something
+    // fails halfway through.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM votes WHERE question_id = $1', [q.id]);
+      await client.query('DELETE FROM questions WHERE id = $1', [q.id]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
     io.emit('questions:changed');
     res.status(204).end();
   })
@@ -359,16 +403,30 @@ app.delete(
   })
 );
 
-// ---------- export (raw data for the PDF step) ----------
+// ---------- export (raw data the admin's PDF button builds from) ----------
 
+// Admin-gated (unlike /api/questions/:id/results, which is left open — see
+// the comment on that route): this endpoint dumps EVERY question at once,
+// so it's the one place a stray URL guess would most easily hand someone
+// the whole AG's results in one shot. Gating it costs nothing and matches
+// the "results stay hidden while open" requirement more strictly.
+//
+// A question that isn't closed yet never gets a tally computed at all here
+// (not just hidden client-side) — its breakdown by choice must not leak
+// through this endpoint while voting is still in progress.
 app.get(
   '/api/export/results',
+  requireAdmin,
   wrap(async (req, res) => {
     const { rows: questions } = await pool.query('SELECT * FROM questions ORDER BY order_index ASC');
     const results = [];
     for (const q of questions) {
-      const { tally, total } = await tallyFor(q.id);
-      results.push({ ...questionRow(q), tally, total });
+      if (q.status === 'closed') {
+        const { tally, total } = await tallyFor(q.id);
+        results.push({ ...questionRow(q), tally, total });
+      } else {
+        results.push({ ...questionRow(q), tally: null, total: null });
+      }
     }
     res.json(results);
   })

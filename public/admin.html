@@ -88,6 +88,19 @@
 
     <hr class="divider" />
 
+    <!-- Fin du scrutin : les exports ne sont activés qu'une fois qu'aucune
+         question n'est encore ouverte — pas besoin d'un bouton séparé qui
+         "termine" quoi que ce soit côté serveur, fermer la dernière question
+         suffit. -->
+    <h2>Fin du scrutin</h2>
+    <p id="end-voting-hint" class="muted">Ferme toutes les questions ouvertes avant d'exporter les résultats.</p>
+    <div class="btn-row">
+      <button id="export-pdf-btn" class="btn-primary" disabled>Exporter en PDF</button>
+      <button id="export-csv-btn" class="btn-secondary" disabled>Exporter en CSV</button>
+    </div>
+
+    <hr class="divider" />
+
     <!-- Procurations : liens personnels à poids de vote, générés à partir de la liste privée du président -->
     <h2>Procurations</h2>
     <p class="muted">
@@ -112,6 +125,9 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <!-- Vendored locally (not loaded from a CDN) so the export button works
+       even if the deployed server has no outbound internet access. -->
+  <script src="/js/vendor/jspdf.umd.min.js"></script>
   <script src="/js/admin.js"></script>
 </body>
 </html>

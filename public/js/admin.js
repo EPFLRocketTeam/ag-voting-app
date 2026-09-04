@@ -51,6 +51,10 @@ const el = {
   createVoterBtn: document.getElementById('create-voter-btn'),
   voterFormError: document.getElementById('voter-form-error'),
   votersList: document.getElementById('voters-list'),
+
+  exportPdfBtn: document.getElementById('export-pdf-btn'),
+  exportCsvBtn: document.getElementById('export-csv-btn'),
+  endVotingHint: document.getElementById('end-voting-hint'),
 };
 
 // ---------- petit utilitaire d'appel API ----------
@@ -251,6 +255,27 @@ async function refreshQuestions() {
 function renderAll() {
   renderLiveSection();
   renderQuestionsList();
+  updateExportGating();
+}
+
+// Les deux boutons d'export ne sont cliquables que lorsqu'aucune question
+// n'est encore ouverte — fermer la dernière question EST le "fin du
+// scrutin", pas besoin d'un état séparé à gérer côté serveur.
+function updateExportGating() {
+  const anyOpen = state.questions.some((q) => q.status === 'open');
+  const hasQuestions = state.questions.length > 0;
+  const canExport = hasQuestions && !anyOpen;
+
+  el.exportPdfBtn.disabled = !canExport;
+  el.exportCsvBtn.disabled = !canExport;
+
+  if (anyOpen) {
+    el.endVotingHint.textContent = 'Ferme toutes les questions ouvertes avant d\'exporter les résultats.';
+  } else if (!hasQuestions) {
+    el.endVotingHint.textContent = 'Aucune question créée pour l\'instant.';
+  } else {
+    el.endVotingHint.textContent = 'Toutes les questions sont fermées — les résultats sont prêts à être exportés.';
+  }
 }
 
 function renderLiveSection() {
@@ -342,7 +367,11 @@ function renderQuestionsList() {
     if (q.status === 'draft') {
       actions.appendChild(makeButton('Ouvrir', 'btn-primary', () => openQuestion(q.id)));
       actions.appendChild(makeButton('Modifier', 'btn-secondary', () => startEdit(q)));
-      actions.appendChild(makeButton('Supprimer', 'btn-danger', () => deleteQuestion(q.id)));
+      actions.appendChild(makeButton('Supprimer', 'btn-danger', () => deleteQuestion(q)));
+    } else if (q.status === 'closed') {
+      // Utile pour nettoyer des questions de test après un essai — une
+      // question ouverte, elle, ne peut pas être supprimée (voir server.js).
+      actions.appendChild(makeButton('Supprimer', 'btn-danger', () => deleteQuestion(q)));
     }
 
     if (actions.children.length > 0) card.appendChild(actions);
@@ -385,10 +414,18 @@ async function closeQuestion(id) {
   }
 }
 
-async function deleteQuestion(id) {
-  if (!confirm('Supprimer cette question ?')) return;
+async function deleteQuestion(question) {
+  // A closed question may already have real results attached — make that
+  // explicit in the confirmation instead of using the same generic prompt
+  // as deleting an empty draft.
+  const message =
+    question.status === 'closed'
+      ? `Supprimer définitivement « ${question.text} » ? Cette question est fermée — son résultat et tous les votes associés seront perdus, sans possibilité de récupération.`
+      : 'Supprimer cette question ?';
+  if (!confirm(message)) return;
   try {
-    await api(`/api/questions/${id}`, { method: 'DELETE', auth: true });
+    await api(`/api/questions/${question.id}`, { method: 'DELETE', auth: true });
+    delete state.finalResults[question.id];
     await refreshQuestions();
   } catch (err) {
     alert(err.message);
@@ -472,6 +509,187 @@ function showVoterFormError(message) {
   el.voterFormError.textContent = message;
   el.voterFormError.classList.remove('hidden');
 }
+
+// ---------- export PDF ----------
+//
+// Pulls the admin-only /api/export/results snapshot (which never includes
+// a per-choice breakdown for a question that isn't closed yet — enforced
+// server-side, not just hidden here) and lays it out with jsPDF, loaded
+// locally from /js/vendor/ rather than a CDN so this still works even if
+// the server it's deployed on has no outbound internet access.
+
+const STATUS_LABEL_PDF = { draft: 'Brouillon', open: 'Ouvert (non clôturé)', closed: 'Fermé' };
+
+function formatDateTimeFr(date) {
+  return date.toLocaleString('fr-CH', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function exportResultsPdf() {
+  el.exportPdfBtn.disabled = true;
+  el.exportPdfBtn.textContent = 'Génération…';
+  try {
+    const questions = await api('/api/export/results', { auth: true });
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+    const marginX = 48;
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    let y = 56;
+
+    function ensureSpace(nextLineHeight) {
+      if (y + nextLineHeight > pageHeight - 48) {
+        doc.addPage();
+        y = 56;
+      }
+    }
+
+    // -- en-tête --
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.setTextColor('#b92a30'); // brand red
+    doc.text('Résultats — Assemblée Générale', marginX, y);
+    y += 22;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor('#555555');
+    doc.text('EPFL Rocket Team', marginX, y);
+    y += 14;
+    doc.text(`Généré le ${formatDateTimeFr(new Date())}`, marginX, y);
+    y += 10;
+    doc.setDrawColor('#e0e0e0');
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 26;
+
+    if (questions.length === 0) {
+      doc.setTextColor('#000000');
+      doc.setFontSize(12);
+      doc.text('Aucune question créée.', marginX, y);
+    }
+
+    questions.forEach((q, index) => {
+      ensureSpace(60);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor('#000000');
+      const questionLines = doc.splitTextToSize(`Q${index + 1}. ${q.text}`, pageWidth - marginX * 2);
+      doc.text(questionLines, marginX, y);
+      y += questionLines.length * 16;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor('#777777');
+      const typeLabel = q.type === 'standard' ? 'Standard (Oui / Non / Blanc)' : `Personnalisé : ${(q.options || []).join(', ')}`;
+      doc.text(`${typeLabel} — ${STATUS_LABEL_PDF[q.status] || q.status}`, marginX, y);
+      y += 18;
+
+      if (q.status === 'closed' && q.tally) {
+        const choices = q.type === 'standard' ? STANDARD_LABELS : q.options || [];
+        for (const choice of choices) {
+          ensureSpace(16);
+          const count = q.tally[choice] || 0;
+          const pct = q.total > 0 ? Math.round((count / q.total) * 100) : 0;
+          doc.setTextColor('#000000');
+          doc.setFontSize(11);
+          doc.text(`${choice} : ${count} voix (${pct}%)`, marginX + 12, y);
+          y += 16;
+        }
+        ensureSpace(16);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor('#333333');
+        doc.text(`Total : ${q.total} voix`, marginX + 12, y);
+        doc.setFont('helvetica', 'normal');
+        y += 24;
+      } else {
+        ensureSpace(16);
+        doc.setTextColor('#a05a00');
+        doc.setFontSize(11);
+        doc.text('Vote non clôturé — résultat non disponible.', marginX + 12, y);
+        y += 24;
+      }
+
+      y += 8; // espace avant la question suivante
+    });
+
+    const filename = `resultats-ag-${new Date().toISOString().slice(0, 10)}.pdf`;
+    doc.save(filename);
+  } catch (err) {
+    alert(`Échec de l'export PDF : ${err.message}`);
+  } finally {
+    el.exportPdfBtn.disabled = false;
+    el.exportPdfBtn.textContent = 'Exporter en PDF';
+  }
+}
+
+el.exportPdfBtn.addEventListener('click', exportResultsPdf);
+
+const STATUS_LABEL_CSV = { draft: 'Brouillon', open: 'Ouvert (non clôturé)', closed: 'Fermé' };
+
+// One row per (question, choice) — "long" format, easiest to open straight
+// into Excel/Google Sheets or to pivot. A question that isn't closed yet
+// (shouldn't happen once the button is enabled, but just in case) gets one
+// row with the result fields left blank, same spirit as the PDF.
+function csvEscape(value) {
+  const str = String(value ?? '');
+  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+async function exportResultsCsv() {
+  el.exportCsvBtn.disabled = true;
+  el.exportCsvBtn.textContent = 'Génération…';
+  try {
+    const questions = await api('/api/export/results', { auth: true });
+    const header = ['Question', 'Type', 'Statut', 'Choix', 'Voix', 'Pourcentage', 'Total voix'];
+    const rows = [header];
+
+    questions.forEach((q, index) => {
+      const typeLabel = q.type === 'standard' ? 'Standard (Oui / Non / Blanc)' : `Personnalisé (${(q.options || []).join(', ')})`;
+      const statusLabel = STATUS_LABEL_CSV[q.status] || q.status;
+      const questionLabel = `Q${index + 1}. ${q.text}`;
+
+      if (q.status === 'closed' && q.tally) {
+        const choices = q.type === 'standard' ? STANDARD_LABELS : q.options || [];
+        for (const choice of choices) {
+          const count = q.tally[choice] || 0;
+          const pct = q.total > 0 ? Math.round((count / q.total) * 100) : 0;
+          rows.push([questionLabel, typeLabel, statusLabel, choice, count, `${pct}%`, q.total]);
+        }
+      } else {
+        rows.push([questionLabel, typeLabel, statusLabel, '', '', '', '']);
+      }
+    });
+
+    const csvContent = rows.map((row) => row.map(csvEscape).join(',')).join('\r\n');
+    // BOM upfront so Excel (which guesses encoding from the first bytes,
+    // not from any header) opens accented French characters correctly
+    // instead of mangling "é"/"è"/etc.
+    const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `resultats-ag-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Échec de l'export CSV : ${err.message}`);
+  } finally {
+    el.exportCsvBtn.disabled = false;
+    el.exportCsvBtn.textContent = 'Exporter en CSV';
+  }
+}
+
+el.exportCsvBtn.addEventListener('click', exportResultsCsv);
 
 // ---------- mises à jour en direct ----------
 
