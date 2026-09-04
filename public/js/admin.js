@@ -550,7 +550,6 @@ async function exportResultsPdf() {
       }
     }
 
-    // -- en-tête --
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(18);
     doc.setTextColor('#b92a30'); // brand red
@@ -616,7 +615,7 @@ async function exportResultsPdf() {
         y += 24;
       }
 
-      y += 8; // espace avant la question suivante
+      y += 8;
     });
 
     const filename = `resultats-ag-${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -714,7 +713,7 @@ function connectSocket() {
   });
 
   // Pendant que le vote est ouvert, seul le NOMBRE de votes est diffusé —
-  // jamais le détail par choix (voir la demande du président).
+  // jamais le détail par choix (résultats cachés jusqu'à la fermeture).
   socket.on('vote-count:update', ({ questionId, voteCount }) => {
     state.voteCounts[questionId] = voteCount;
     renderAll();

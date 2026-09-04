@@ -1,11 +1,10 @@
+# Local dev database only — run `docker compose up -d` to get a Postgres
+# matching the DATABASE_URL in .env.example. Not used in production: the
+# deployed app connects to Dokploy's managed Postgres resource instead
+# (its connection string is set as DATABASE_URL in Dokploy's env panel).
 services:
   db:
     image: postgres:16-alpine
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ag_voting" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
     environment:
       POSTGRES_USER: ag_voting

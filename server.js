@@ -22,8 +22,8 @@ const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const { pool, init } = require('./db');
 
-const PORT = process.env.PORT;
-const ADMIN_PIN = process.env.ADMIN_PIN || 'rocket2026'; // set a real one in .env before deploying
+const PORT = process.env.PORT || 3000;
+const ADMIN_PIN = process.env.ADMIN_PIN || 'changeme'; // set a real one in .env before deploying
 
 const app = express();
 const server = http.createServer(app);
@@ -334,8 +334,8 @@ app.post(
     );
 
     // Only the raw participation count is broadcast while voting is open —
-    // never the breakdown by choice (see the President's requirement that
-    // the room should only see the final result, not a running tally).
+    // never the breakdown by choice. Results stay hidden until a question
+    // closes; this is a deliberate requirement, not just a UI choice.
     const voteCount = await voteRowCountFor(questionId);
     io.emit('vote-count:update', { questionId, voteCount });
     res.json({ ok: true, weight });

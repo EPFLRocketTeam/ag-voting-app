@@ -1,8 +1,8 @@
 /* style.css — shared styles for admin.html and voter.html.
    Brand colors sampled from the EPFL Rocket Team logo: the red (#b92a30)
-   and near-black (#010207). Page background is white per Nikita's note —
-   the black in the logo file is just the logo's own badge background, not
-   a cue for the page itself. */
+   and near-black (#010207). Page background is white — the black in the
+   logo file is just the logo's own badge background, not a cue for the
+   page itself. */
 
 :root {
   --color-bg: #ffffff;
