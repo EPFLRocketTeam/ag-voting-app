@@ -1,0 +1,11 @@
+{
+  "name": "Vote AG — EPFL Rocket Team",
+  "short_name": "Vote AG",
+  "icons": [
+    { "src": "/assets/favicon/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/favicon/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#b92a30",
+  "background_color": "#ffffff",
+  "display": "standalone"
+}
