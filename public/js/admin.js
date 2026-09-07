@@ -55,6 +55,11 @@ const el = {
   exportPdfBtn: document.getElementById('export-pdf-btn'),
   exportCsvBtn: document.getElementById('export-csv-btn'),
   endVotingHint: document.getElementById('end-voting-hint'),
+
+  downloadTemplateBtn: document.getElementById('download-template-btn'),
+  importCsvInput: document.getElementById('import-csv-input'),
+  importCsvBtn: document.getElementById('import-csv-btn'),
+  importStatus: document.getElementById('import-status'),
 };
 
 // ---------- petit utilitaire d'appel API ----------
@@ -431,6 +436,157 @@ async function deleteQuestion(question) {
     alert(err.message);
   }
 }
+
+// ---------- import de questions depuis un fichier CSV ----------
+//
+// Chaque ligne du fichier devient une question en brouillon via le même
+// POST /api/questions que le formulaire manuel — aucune route serveur
+// dédiée, donc aucun risque de casser la création de questions existante.
+// Le fichier est entièrement traité côté navigateur (lecture + parsing),
+// seules les questions déjà validées sont envoyées au serveur une par une.
+
+// Parseur CSV minimal mais correct (RFC4180) : gère les champs entre
+// guillemets, les guillemets échappés (""), les virgules/retours à la
+// ligne à l'intérieur d'un champ, et les fins de ligne \r\n ou \n. Un
+// simple split(',') casserait dès qu'une question contient une virgule.
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') {
+        inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      row.push(field);
+      field = '';
+    } else if (c === '\r') {
+      // ignoré — le \n qui suit termine la ligne
+    } else if (c === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else {
+      field += c;
+    }
+  }
+  if (field !== '' || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function downloadCsvTemplate() {
+  const rows = [
+    ['Question', 'Type', 'Options'],
+    ['Approuver le budget 2026 ?', 'Standard', ''],
+    ['Date de la prochaine sortie', 'Personnalisé', '3 mars 2027;10 mars 2027;17 mars 2027'],
+  ];
+  const csvContent = rows.map((row) => row.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'modele-questions-ag.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+el.downloadTemplateBtn.addEventListener('click', downloadCsvTemplate);
+
+function showImportStatus(message, isError) {
+  el.importStatus.textContent = message;
+  el.importStatus.classList.remove('hidden');
+  el.importStatus.classList.toggle('error-text', isError);
+  el.importStatus.classList.toggle('muted', !isError);
+}
+
+async function importQuestionsFromCsv(file) {
+  el.importCsvBtn.disabled = true;
+  el.importCsvBtn.textContent = 'Import en cours…';
+  el.importStatus.classList.add('hidden');
+  try {
+    let text = await file.text();
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // BOM éventuel
+
+    const allRows = parseCsvText(text).filter((r) => r.some((cell) => cell.trim() !== ''));
+    if (allRows.length === 0) throw new Error('Le fichier est vide.');
+    const dataRows = allRows.slice(1); // la première ligne (en-têtes) est toujours ignorée
+    if (dataRows.length === 0) throw new Error("Aucune ligne de question trouvée après l'en-tête.");
+
+    if (!confirm(`Importer ${dataRows.length} question(s) depuis ce fichier ?`)) return;
+
+    let success = 0;
+    const errors = [];
+
+    // Envoyées une par une, dans l'ordre du fichier — pas en parallèle —
+    // pour que l'ordre des questions dans l'admin corresponde à l'ordre
+    // des lignes du fichier (order_index est attribué séquentiellement
+    // côté serveur).
+    for (let i = 0; i < dataRows.length; i++) {
+      const lineNum = i + 2; // +1 pour l'en-tête, +1 car les lignes de tableur commencent à 1
+      const [rawText, rawType, rawOptions] = dataRows[i];
+      const questionText = (rawText || '').trim();
+      if (!questionText) {
+        errors.push(`Ligne ${lineNum} : texte de question manquant, ignorée.`);
+        continue;
+      }
+
+      const typeRaw = (rawType || '').trim().toLowerCase();
+      const isCustom = typeRaw.startsWith('custom') || typeRaw.startsWith('personnalis');
+      const type = isCustom ? 'custom' : 'standard';
+
+      let options;
+      if (isCustom) {
+        options = (rawOptions || '').split(';').map((o) => o.trim()).filter(Boolean);
+        if (options.length < 2) {
+          errors.push(`Ligne ${lineNum} : type personnalisé nécessite au moins 2 options séparées par « ; », ignorée.`);
+          continue;
+        }
+      }
+
+      try {
+        await api('/api/questions', { method: 'POST', body: { text: questionText, type, options }, auth: true });
+        success++;
+      } catch (err) {
+        errors.push(`Ligne ${lineNum} : ${err.message}`);
+      }
+    }
+
+    let summary = `${success} question(s) importée(s) avec succès.`;
+    if (errors.length > 0) summary += `\n${errors.length} ligne(s) ignorée(s) :\n` + errors.join('\n');
+    showImportStatus(summary, errors.length > 0);
+
+    await refreshQuestions();
+  } catch (err) {
+    showImportStatus(`Échec de l'import : ${err.message}`, true);
+  } finally {
+    el.importCsvBtn.disabled = false;
+    el.importCsvBtn.textContent = 'Importer';
+    el.importCsvInput.value = '';
+  }
+}
+
+el.importCsvBtn.addEventListener('click', () => {
+  const file = el.importCsvInput.files[0];
+  if (!file) return showImportStatus('Choisis un fichier CSV avant d\'importer.', true);
+  importQuestionsFromCsv(file);
+});
 
 // ---------- procurations ----------
 

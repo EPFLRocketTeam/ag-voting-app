@@ -82,6 +82,32 @@
 
     <hr class="divider" />
 
+    <!-- Import en masse : préparer les questions dans un tableur et les
+         importer d'un coup plutôt que de tout taper sur le site. Chaque
+         ligne du fichier devient une question en brouillon, exactement
+         comme via le formulaire ci-dessus. -->
+    <div class="card">
+      <h2 style="margin-top: 0;">Importer des questions (CSV)</h2>
+      <p class="muted">
+        Prépare les questions dans Excel / Google Sheets, exporte en CSV, puis importe le fichier ici —
+        chaque ligne devient une question en brouillon. Colonnes attendues : <strong>Question</strong>,
+        <strong>Type</strong> (vide ou « Standard » pour Oui/Non/Blanc, sinon « Personnalisé »),
+        <strong>Options</strong> (uniquement pour un type personnalisé, séparées par des points-virgules
+        « ; »). La première ligne (en-têtes) est toujours ignorée.
+      </p>
+      <div class="btn-row">
+        <button id="download-template-btn" class="btn-secondary" type="button">Télécharger un modèle CSV</button>
+      </div>
+      <div class="field" style="margin-top: 16px;">
+        <label for="import-csv-input">Fichier CSV</label>
+        <input type="file" id="import-csv-input" accept=".csv,text/csv" />
+      </div>
+      <button id="import-csv-btn" class="btn-primary">Importer</button>
+      <p id="import-status" class="muted hidden" style="white-space: pre-line; margin-top: 10px;"></p>
+    </div>
+
+    <hr class="divider" />
+
     <h2>Questions</h2>
     <p id="questions-empty" class="muted hidden">Aucune question pour l'instant — ajoutez-en une ci-dessus.</p>
     <div id="questions-list"></div>
