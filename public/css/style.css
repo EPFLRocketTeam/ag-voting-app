@@ -240,12 +240,6 @@ input:focus, select:focus {
   transition: width 0.3s ease;
 }
 
-/* Quorum bar reuses .result-bar-track/.result-bar-fill, just switches to
-   green once the configured threshold is reached. */
-.result-bar-fill--reached {
-  background: #1f9d55;
-}
-
 /* ---------- results donut chart (closed questions) ---------- */
 
 .results-donut-row {

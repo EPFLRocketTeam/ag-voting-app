@@ -11,9 +11,7 @@ const state = {
   adminPin: localStorage.getItem('agVotingAdminPin') || null,
   questions: [],              // liste complète depuis GET /api/questions
   voteCounts: {},             // questionId -> nombre de votes reçus (pendant que c'est ouvert, sans détail)
-  weightedVoteCounts: {},      // questionId -> total pondéré des voix reçues (procurations comprises)
   finalResults: {},           // questionId -> { tally, total } (uniquement une fois fermé)
-  settings: { expectedVoters: null, quorumThresholdPercent: 50 }, // configuré une fois par AG, voir refreshSettings()
   editingQuestionId: null,    // null = formulaire "Nouvelle question" ; sinon on modifie ce brouillon
   voters: [],                 // liste des procurations créées
 };
@@ -34,18 +32,6 @@ const el = {
   liveVoteCount: document.getElementById('live-vote-count'),
   liveVoteCountLabel: document.getElementById('live-vote-count-label'),
   closeQuestionBtn: document.getElementById('close-question-btn'),
-  visibilityBadge: document.getElementById('visibility-badge'),
-  toggleVisibilityBtn: document.getElementById('toggle-visibility-btn'),
-  quorumProgress: document.getElementById('quorum-progress'),
-  quorumCountLabel: document.getElementById('quorum-count-label'),
-  quorumBarFill: document.getElementById('quorum-bar-fill'),
-  quorumStatusText: document.getElementById('quorum-status-text'),
-  quorumNotConfigured: document.getElementById('quorum-not-configured'),
-  quorumExpectedInput: document.getElementById('quorum-expected-input'),
-  quorumThresholdInput: document.getElementById('quorum-threshold-input'),
-  quorumSaveBtn: document.getElementById('quorum-save-btn'),
-  quorumFormError: document.getElementById('quorum-form-error'),
-  quorumFormSaved: document.getElementById('quorum-form-saved'),
 
   formTitle: document.getElementById('form-title'),
   questionText: document.getElementById('question-text'),
@@ -133,7 +119,6 @@ function enterDashboard() {
   connectSocket();
   refreshQuestions();
   refreshVoters();
-  refreshSettings();
   renderJoinQr();
 }
 
@@ -288,7 +273,6 @@ async function refreshQuestions() {
   if (open && state.voteCounts[open.id] === undefined) {
     const res = await api(`/api/questions/${open.id}/vote-count`);
     state.voteCounts[open.id] = res.voteCount;
-    state.weightedVoteCounts[open.id] = res.weightedVoteCount;
   }
 
   // Pour les questions déjà fermées (par ex. après un rechargement de page),
@@ -341,87 +325,7 @@ function renderLiveSection() {
   el.liveVoteCount.textContent = count;
   el.liveVoteCountLabel.textContent = count === 1 ? 'vote reçu' : 'votes reçus';
   el.closeQuestionBtn.onclick = () => closeQuestion(open.id);
-
-  const visible = !!open.visible;
-  el.visibilityBadge.textContent = visible ? 'Visible pour les votants' : 'Masqué';
-  el.visibilityBadge.className = `badge ${visible ? 'badge-open' : 'badge-draft'}`;
-  el.toggleVisibilityBtn.textContent = visible ? 'Masquer aux votants' : 'Afficher aux votants';
-  el.toggleVisibilityBtn.onclick = () => toggleVisibility(open.id, !visible);
-
-  renderQuorumProgress(open.id);
 }
-
-// Découplé de l'ouverture : la question accepte déjà les votes, mais reste
-// cachée aux votants jusqu'à ce qu'on clique ici -- pratique pour que tout
-// le monde regarde son téléphone au même moment.
-async function toggleVisibility(id, visible) {
-  try {
-    await api(`/api/questions/${id}/visibility`, { method: 'PATCH', auth: true, body: { visible } });
-  } catch (err) {
-    alert(err.message);
-  }
-}
-
-// La barre de quorum ne dit jamais rien sur le détail par choix — juste le
-// total pondéré (procurations comprises) reçu jusqu'ici contre le nombre de
-// voix attendues configuré ci-dessous, exactement comme le compteur brut
-// juste au-dessus.
-function renderQuorumProgress(questionId) {
-  const expected = state.settings.expectedVoters;
-  if (!expected || expected < 1) {
-    el.quorumProgress.classList.add('hidden');
-    el.quorumNotConfigured.classList.remove('hidden');
-    return;
-  }
-  el.quorumNotConfigured.classList.add('hidden');
-  el.quorumProgress.classList.remove('hidden');
-
-  const weighted = state.weightedVoteCounts[questionId] || 0;
-  const pct = Math.min(100, Math.round((weighted / expected) * 100));
-  const threshold = state.settings.quorumThresholdPercent || 50;
-  const reached = pct >= threshold;
-
-  el.quorumCountLabel.textContent = `${weighted} / ${expected} (${pct}%)`;
-  el.quorumBarFill.style.width = `${pct}%`;
-  el.quorumBarFill.classList.toggle('result-bar-fill--reached', reached);
-  el.quorumStatusText.textContent = reached
-    ? `Quorum atteint (seuil : ${threshold}%).`
-    : `Quorum requis : ${threshold}%.`;
-}
-
-// ---------- réglages (quorum) ----------
-
-async function refreshSettings() {
-  state.settings = await api('/api/settings', { auth: true });
-  renderQuorumForm();
-  renderAll();
-}
-
-function renderQuorumForm() {
-  el.quorumExpectedInput.value = state.settings.expectedVoters ?? '';
-  el.quorumThresholdInput.value = state.settings.quorumThresholdPercent ?? 50;
-}
-
-el.quorumSaveBtn.addEventListener('click', async () => {
-  el.quorumFormError.classList.add('hidden');
-  el.quorumFormSaved.classList.add('hidden');
-  el.quorumSaveBtn.disabled = true;
-  try {
-    const body = {
-      expectedVoters: el.quorumExpectedInput.value.trim() === '' ? null : el.quorumExpectedInput.value.trim(),
-      quorumThresholdPercent: el.quorumThresholdInput.value.trim() === '' ? 50 : el.quorumThresholdInput.value.trim(),
-    };
-    state.settings = await api('/api/settings', { method: 'PATCH', auth: true, body });
-    renderQuorumForm();
-    renderAll();
-    el.quorumFormSaved.classList.remove('hidden');
-  } catch (err) {
-    el.quorumFormError.textContent = err.message;
-    el.quorumFormError.classList.remove('hidden');
-  } finally {
-    el.quorumSaveBtn.disabled = false;
-  }
-});
 
 function buildResultsBars(question, results) {
   const wrap = document.createElement('div');
@@ -1049,29 +953,13 @@ function connectSocket() {
   socket.on('question:open', (question) => {
     upsertQuestionLocal(question);
     state.voteCounts[question.id] = 0;
-    state.weightedVoteCounts[question.id] = 0;
     renderAll();
   });
 
-  // Pendant que le vote est ouvert, seuls ces DEUX totaux sont diffusés —
+  // Pendant que le vote est ouvert, seul ce total est diffusé —
   // jamais le détail par choix (résultats cachés jusqu'à la fermeture).
-  socket.on('vote-count:update', ({ questionId, voteCount, weightedVoteCount }) => {
+  socket.on('vote-count:update', ({ questionId, voteCount }) => {
     state.voteCounts[questionId] = voteCount;
-    state.weightedVoteCounts[questionId] = weightedVoteCount;
-    renderAll();
-  });
-
-  // Un autre onglet admin a changé le nombre de voix attendues / le seuil —
-  // on se resynchronise pour que la barre de quorum reste cohérente partout.
-  socket.on('settings:changed', (settings) => {
-    state.settings = settings;
-    renderQuorumForm();
-    renderAll();
-  });
-
-  socket.on('question:visibility', ({ questionId, visible }) => {
-    const q = state.questions.find((x) => x.id === questionId);
-    if (q) q.visible = visible;
     renderAll();
   });
 

@@ -15,7 +15,6 @@ const state = {
   voterId: null,          // only used in anonymous mode
   identity: null,         // { displayName, weight } — only set in proxy mode
   currentQuestion: null,  // the question actually shown on screen, or null
-  pendingQuestion: null,  // the open question while it's still hidden (status=open, visible=false)
   submitting: false,
 };
 
@@ -86,12 +85,7 @@ async function loadCurrentQuestion() {
   const questions = await api('/api/questions');
   const open = questions.find((q) => q.status === 'open');
   if (open) {
-    state.pendingQuestion = open;
-    if (open.visible) {
-      showQuestion(open);
-    } else {
-      showOnly(el.waitingState);
-    }
+    showQuestion(open);
   } else {
     showOnly(el.waitingState);
   }
@@ -156,29 +150,10 @@ function connectSocket() {
   });
 
   socket.on('question:open', (question) => {
-    state.pendingQuestion = question;
-    if (question.visible) {
-      showQuestion(question);
-    } else {
-      showOnly(el.waitingState);
-    }
-  });
-
-  socket.on('question:visibility', ({ questionId, visible }) => {
-    if (!state.pendingQuestion || state.pendingQuestion.id !== questionId) return;
-    state.pendingQuestion.visible = visible;
-    if (visible) {
-      showQuestion(state.pendingQuestion);
-    } else if (state.currentQuestion && state.currentQuestion.id === questionId) {
-      state.currentQuestion = null;
-      showOnly(el.waitingState);
-    }
+    showQuestion(question);
   });
 
   socket.on('question:closed', ({ questionId }) => {
-    if (state.pendingQuestion && state.pendingQuestion.id === questionId) {
-      state.pendingQuestion = null;
-    }
     if (state.currentQuestion && state.currentQuestion.id === questionId) {
       state.currentQuestion = null;
       showOnly(el.closedState);
