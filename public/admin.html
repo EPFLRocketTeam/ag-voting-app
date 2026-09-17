@@ -53,14 +53,57 @@
         <span class="badge badge-open">En direct</span>
         <h2 id="live-question-text" style="margin: 10px 0 4px;"></h2>
         <p class="muted" style="margin: 0 0 16px;">Le détail par choix n'est révélé qu'à la fermeture du vote.</p>
+
+        <div class="btn-row" style="align-items: center; margin-bottom: 16px;">
+          <span class="badge" id="visibility-badge">Masqué</span>
+          <button id="toggle-visibility-btn" class="btn-secondary" type="button">Afficher aux votants</button>
+        </div>
+
         <div class="live-count-number" id="live-vote-count">0</div>
         <div class="muted" id="live-vote-count-label">vote reçu</div>
+
+        <div id="quorum-progress" class="hidden" style="margin-top: 18px;">
+          <div class="result-row-label">
+            <span>Quorum</span>
+            <span class="count" id="quorum-count-label"></span>
+          </div>
+          <div class="result-bar-track"><div class="result-bar-fill" id="quorum-bar-fill" style="width: 0%;"></div></div>
+          <p class="muted" id="quorum-status-text" style="margin-top: 6px;"></p>
+        </div>
+        <p id="quorum-not-configured" class="muted hidden" style="margin-top: 18px;">
+          Indique le nombre de voix attendues dans la section « Quorum » ci-dessous pour voir la progression ici.
+        </p>
+
         <div class="btn-row" style="margin-top: 20px;">
           <button id="close-question-btn" class="btn-danger">Fermer la question</button>
         </div>
       </div>
       <hr class="divider" />
     </div>
+
+    <!-- Quorum : nombre de voix attendues au total (votants + procurations),
+         configuré une fois par AG pour afficher une barre de progression en
+         direct pendant chaque vote, sans avoir à deviner quand clore. -->
+    <div class="card">
+      <h2 style="margin-top: 0;">Quorum</h2>
+      <p class="muted">
+        Indique combien de voix sont attendues au total (votants sur place et en ligne, procurations
+        incluses) pour voir une barre de progression en direct pendant chaque vote.
+      </p>
+      <div class="field">
+        <label for="quorum-expected-input">Voix attendues au total</label>
+        <input type="text" id="quorum-expected-input" placeholder="ex. 40" inputmode="numeric" />
+      </div>
+      <div class="field">
+        <label for="quorum-threshold-input">Seuil de quorum (%)</label>
+        <input type="text" id="quorum-threshold-input" placeholder="50" inputmode="numeric" />
+      </div>
+      <button id="quorum-save-btn" class="btn-primary">Enregistrer</button>
+      <p id="quorum-form-error" class="error-text hidden"></p>
+      <p id="quorum-form-saved" class="muted hidden" style="margin-top: 8px;">Enregistré.</p>
+    </div>
+
+    <hr class="divider" />
 
     <!-- Formulaire de création / modification -->
     <div class="card">
@@ -135,6 +178,21 @@
 
     <hr class="divider" />
 
+    <!-- Rejoindre en un scan : lien public normal (1 voix, comme n'importe
+         quel votant sur place) encodé en QR pour être projeté à l'écran --
+         évite de faire taper une URL à toute la salle. -->
+    <h2>Rejoindre en un scan</h2>
+    <p class="muted">Affiche ce code à l'écran (projection) pour que les votants sur place rejoignent sans taper d'URL.</p>
+    <div class="card" style="text-align: center;">
+      <div id="join-qr-canvas" style="display: flex; justify-content: center;"></div>
+      <p class="muted" id="join-qr-url" style="margin-top: 12px; word-break: break-all;"></p>
+      <div class="btn-row" style="justify-content: center; margin-top: 8px;">
+        <button id="copy-join-link-btn" class="btn-secondary" type="button">Copier le lien</button>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
     <!-- Procurations : liens personnels à poids de vote, à transmettre uniquement à la personne concernée -->
     <h2>Procurations</h2>
     <p class="muted">
@@ -162,6 +220,7 @@
   <!-- Vendored locally (not loaded from a CDN) so the export button works
        even if the deployed server has no outbound internet access. -->
   <script src="/js/vendor/jspdf.umd.min.js"></script>
+  <script src="/js/vendor/qrcode.min.js"></script>
   <script src="/js/admin.js"></script>
 </body>
 </html>

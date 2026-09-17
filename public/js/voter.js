@@ -14,12 +14,14 @@ const state = {
   token: new URLSearchParams(location.search).get('token'),
   voterId: null,          // only used in anonymous mode
   identity: null,         // { displayName, weight } — only set in proxy mode
-  currentQuestion: null,  // the open question, or null
+  currentQuestion: null,  // the question actually shown on screen, or null
+  pendingQuestion: null,  // the open question while it's still hidden (status=open, visible=false)
   submitting: false,
 };
 
 const el = {
   connectionStatus: document.getElementById('connection-status'),
+  enablePushBtn: document.getElementById('enable-push-btn'),
   proxyBanner: document.getElementById('proxy-banner'),
   invalidTokenState: document.getElementById('invalid-token-state'),
   waitingState: document.getElementById('waiting-state'),
@@ -76,6 +78,7 @@ async function boot() {
   }
 
   connectSocket();
+  setupPush();
   await loadCurrentQuestion();
 }
 
@@ -83,7 +86,12 @@ async function loadCurrentQuestion() {
   const questions = await api('/api/questions');
   const open = questions.find((q) => q.status === 'open');
   if (open) {
-    showQuestion(open);
+    state.pendingQuestion = open;
+    if (open.visible) {
+      showQuestion(open);
+    } else {
+      showOnly(el.waitingState);
+    }
   } else {
     showOnly(el.waitingState);
   }
@@ -148,15 +156,77 @@ function connectSocket() {
   });
 
   socket.on('question:open', (question) => {
-    showQuestion(question);
+    state.pendingQuestion = question;
+    if (question.visible) {
+      showQuestion(question);
+    } else {
+      showOnly(el.waitingState);
+    }
+  });
+
+  socket.on('question:visibility', ({ questionId, visible }) => {
+    if (!state.pendingQuestion || state.pendingQuestion.id !== questionId) return;
+    state.pendingQuestion.visible = visible;
+    if (visible) {
+      showQuestion(state.pendingQuestion);
+    } else if (state.currentQuestion && state.currentQuestion.id === questionId) {
+      state.currentQuestion = null;
+      showOnly(el.waitingState);
+    }
   });
 
   socket.on('question:closed', ({ questionId }) => {
+    if (state.pendingQuestion && state.pendingQuestion.id === questionId) {
+      state.pendingQuestion = null;
+    }
     if (state.currentQuestion && state.currentQuestion.id === questionId) {
       state.currentQuestion = null;
       showOnly(el.closedState);
     }
   });
+}
+
+// ---------- notifications push (optionnel) ----------
+//
+// Une brève alerte native quand une question est révélée, même onglet
+// fermé ou téléphone verrouillé -- entièrement opt-in, jamais activé sans
+// un clic explicite sur le bouton.
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+async function setupPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return; // navigateur trop ancien
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) return; // déjà abonné depuis une visite précédente
+
+    const { publicKey } = await api('/api/push/public-key');
+    if (!publicKey) return; // pas configuré côté serveur
+
+    el.enablePushBtn.classList.remove('hidden');
+    el.enablePushBtn.addEventListener('click', async () => {
+      el.enablePushBtn.disabled = true;
+      try {
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+        await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
+        el.enablePushBtn.textContent = 'Notifications activées';
+      } catch (err) {
+        el.enablePushBtn.disabled = false;
+        alert("Impossible d'activer les notifications : " + err.message);
+      }
+    });
+  } catch (err) {
+    console.error('Service worker setup failed:', err);
+  }
 }
 
 boot();

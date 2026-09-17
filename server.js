@@ -21,9 +21,23 @@ const http = require('http');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const { pool, init } = require('./db');
+const webpush = require('web-push');
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_PIN = process.env.ADMIN_PIN || 'changeme'; // set a real one in .env before deploying
+
+// Web Push: silently disabled (rather than crashing) if the keys aren't in
+// .env yet -- lets an existing deployment keep running after this update
+// until someone generates and sets a VAPID key pair.
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_CONTACT_EMAIL = process.env.VAPID_CONTACT_EMAIL || 'mailto:admin@example.com';
+const pushEnabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+if (pushEnabled) {
+  webpush.setVapidDetails(VAPID_CONTACT_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn('VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY not set in .env — push notifications are disabled.');
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -55,6 +69,7 @@ function questionRow(q) {
     type: q.type, // 'standard' (fixed Oui/Non/Blanc) or 'custom' (own options)
     options: q.options ?? null, // JSONB comes back already parsed; only set for 'custom'
     status: q.status,
+    visible: q.visible === true,
     orderIndex: q.order_index,
   };
 }
@@ -89,6 +104,46 @@ async function tallyFor(questionId) {
 async function voteRowCountFor(questionId) {
   const { rows } = await pool.query('SELECT COUNT(*) as c FROM votes WHERE question_id = $1', [questionId]);
   return parseInt(rows[0].c, 10);
+}
+
+// Weighted total across ALL choices (never grouped by choice) for a
+// question — same "safe while open" logic as voteRowCountFor: a single
+// number can't reveal how the room is leaning, only how many voices (not
+// people — a procuration counts for its full weight) have voted so far.
+// Used for the live quorum progress bar.
+async function weightedVoteCountFor(questionId) {
+  const { rows } = await pool.query('SELECT COALESCE(SUM(weight), 0) as w FROM votes WHERE question_id = $1', [questionId]);
+  return parseInt(rows[0].w, 10);
+}
+
+function settingsRow(row) {
+  return {
+    expectedVoters: row.expected_voters === null ? null : parseInt(row.expected_voters, 10),
+    quorumThresholdPercent: parseInt(row.quorum_threshold_percent, 10),
+  };
+}
+
+// Sends a small "a question just opened" nudge to every browser that opted
+// in -- never any vote content, just enough to make someone look at their
+// phone. Dead subscriptions (permission revoked, browser data cleared) are
+// cleaned up here rather than retried forever.
+async function notifyAllSubscribers(payload) {
+  if (!pushEnabled) return;
+  const { rows } = await pool.query('SELECT endpoint, subscription FROM push_subscriptions');
+  const body = JSON.stringify(payload);
+  await Promise.all(
+    rows.map(async (row) => {
+      try {
+        await webpush.sendNotification(row.subscription, body);
+      } catch (err) {
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [row.endpoint]);
+        } else {
+          console.error('Push notification failed for a subscriber:', err.message);
+        }
+      }
+    })
+  );
 }
 
 // simple shared-PIN auth for the admin/presenter endpoints — this isn't
@@ -136,8 +191,8 @@ app.get(
   wrap(async (req, res) => {
     const q = await getQuestion(req.params.id);
     if (!q) return res.status(404).json({ error: 'Question introuvable.' });
-    const count = await voteRowCountFor(q.id);
-    res.json({ questionId: q.id, voteCount: count });
+    const [count, weightedCount] = await Promise.all([voteRowCountFor(q.id), weightedVoteCountFor(q.id)]);
+    res.json({ questionId: q.id, voteCount: count, weightedVoteCount: weightedCount });
   })
 );
 
@@ -264,7 +319,7 @@ app.post(
     }
 
     const { rows } = await pool.query(
-      "UPDATE questions SET status = 'open', opened_at = now() WHERE id = $1 RETURNING *",
+      "UPDATE questions SET status = 'open', opened_at = now(), visible = false WHERE id = $1 RETURNING *",
       [q.id]
     );
     io.emit('question:open', questionRow(rows[0]));
@@ -285,6 +340,36 @@ app.post(
     const { tally, total } = await tallyFor(q.id);
     io.emit('question:closed', { questionId: q.id, tally, total });
     res.json({ questionId: q.id, tally, total });
+  })
+);
+
+// Show/hide the currently open question for voters -- decoupled from
+// open/close so the admin can open a question (start accepting votes)
+// ahead of time and reveal it to everyone in the room at the same moment.
+app.patch(
+  '/api/questions/:id/visibility',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const q = await getQuestion(req.params.id);
+    if (!q) return res.status(404).json({ error: 'Question introuvable.' });
+    if (q.status !== 'open') {
+      return res.status(400).json({ error: 'Seule une question ouverte peut être affichée ou masquée.' });
+    }
+    const { visible } = req.body || {};
+    if (typeof visible !== 'boolean') {
+      return res.status(400).json({ error: 'visible doit être un booléen.' });
+    }
+    const { rows } = await pool.query('UPDATE questions SET visible = $1 WHERE id = $2 RETURNING *', [visible, q.id]);
+    const question = questionRow(rows[0]);
+    io.emit('question:visibility', { questionId: q.id, visible });
+    if (visible) {
+      // Fire-and-forget: a slow/failed push should never delay or fail the
+      // admin's "reveal" action itself.
+      notifyAllSubscribers({ title: 'Nouvelle question ouverte', body: q.text }).catch((err) =>
+        console.error('notifyAllSubscribers failed:', err.message)
+      );
+    }
+    res.json(question);
   })
 );
 
@@ -333,12 +418,92 @@ app.post(
       [questionId, rowId, choice, weight]
     );
 
-    // Only the raw participation count is broadcast while voting is open —
+    // Only two safe aggregate numbers are broadcast while voting is open —
     // never the breakdown by choice. Results stay hidden until a question
     // closes; this is a deliberate requirement, not just a UI choice.
-    const voteCount = await voteRowCountFor(questionId);
-    io.emit('vote-count:update', { questionId, voteCount });
+    const [voteCount, weightedVoteCount] = await Promise.all([
+      voteRowCountFor(questionId),
+      weightedVoteCountFor(questionId),
+    ]);
+    io.emit('vote-count:update', { questionId, voteCount, weightedVoteCount });
     res.json({ ok: true, weight });
+  })
+);
+
+// ---------- settings (quorum target, configured once per AG) ----------
+
+app.get(
+  '/api/settings',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const { rows } = await pool.query("SELECT * FROM settings WHERE id = 'main'");
+    res.json(settingsRow(rows[0]));
+  })
+);
+
+app.patch(
+  '/api/settings',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const { expectedVoters, quorumThresholdPercent } = req.body || {};
+
+    let expectedVotersValue = null;
+    if (expectedVoters !== null && expectedVoters !== undefined && expectedVoters !== '') {
+      const n = parseInt(expectedVoters, 10);
+      if (!Number.isInteger(n) || n < 1) {
+        return res.status(400).json({ error: 'Le nombre de voix attendues doit être un entier >= 1 (ou vide).' });
+      }
+      expectedVotersValue = n;
+    }
+
+    let thresholdValue = 50;
+    if (quorumThresholdPercent !== null && quorumThresholdPercent !== undefined && quorumThresholdPercent !== '') {
+      const t = parseInt(quorumThresholdPercent, 10);
+      if (!Number.isInteger(t) || t < 1 || t > 100) {
+        return res.status(400).json({ error: 'Le seuil de quorum doit être un entier entre 1 et 100.' });
+      }
+      thresholdValue = t;
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE settings SET expected_voters = $1, quorum_threshold_percent = $2 WHERE id = 'main' RETURNING *`,
+      [expectedVotersValue, thresholdValue]
+    );
+    const settings = settingsRow(rows[0]);
+    io.emit('settings:changed', settings);
+    res.json(settings);
+  })
+);
+
+// ---------- push notifications (opt-in, discreet nudge on reveal) ----------
+
+app.get('/api/push/public-key', (req, res) => {
+  res.json({ publicKey: pushEnabled ? VAPID_PUBLIC_KEY : null });
+});
+
+app.post(
+  '/api/push/subscribe',
+  wrap(async (req, res) => {
+    const subscription = req.body;
+    if (!subscription || !subscription.endpoint || !subscription.keys) {
+      return res.status(400).json({ error: 'Abonnement push invalide.' });
+    }
+    await pool.query(
+      `INSERT INTO push_subscriptions (endpoint, subscription) VALUES ($1, $2)
+       ON CONFLICT (endpoint) DO UPDATE SET subscription = EXCLUDED.subscription`,
+      [subscription.endpoint, JSON.stringify(subscription)]
+    );
+    res.status(201).json({ ok: true });
+  })
+);
+
+app.delete(
+  '/api/push/subscribe',
+  wrap(async (req, res) => {
+    const { endpoint } = req.body || {};
+    if (!endpoint) return res.status(400).json({ error: 'endpoint est requis.' });
+    await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+    res.status(204).end();
   })
 );
 

@@ -240,6 +240,81 @@ input:focus, select:focus {
   transition: width 0.3s ease;
 }
 
+/* Quorum bar reuses .result-bar-track/.result-bar-fill, just switches to
+   green once the configured threshold is reached. */
+.result-bar-fill--reached {
+  background: #1f9d55;
+}
+
+/* ---------- results donut chart (closed questions) ---------- */
+
+.results-donut-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.donut-chart {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.donut-hole {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.donut-total {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.donut-total-label {
+  font-size: 9px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.results-legend {
+  flex: 1;
+  min-width: 0;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.legend-item .legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.legend-item .count {
+  color: var(--color-text-muted);
+  margin-left: auto;
+  padding-left: 10px;
+}
+
 /* ---------- misc ---------- */
 
 .muted {

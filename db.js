@@ -1,14 +1,7 @@
-// db.js — Postgres storage for questions, votes, and proxy ("procuration") voters.
-//
-// A connection pool + plain SQL, no ORM: the schema is small and staying
-// close to the SQL keeps it easy to reason about during an AG.
-
 const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Only needed against a Postgres that requires TLS (some managed hosts).
-  // A local/self-hosted Postgres on the same server usually doesn't.
   ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
@@ -27,6 +20,12 @@ async function init() {
       opened_at TIMESTAMPTZ,
       closed_at TIMESTAMPTZ
     );
+
+    -- Added for the "afficher/masquer" feature: a question can be open
+    -- (accepting votes) while still hidden from voters, until the admin
+    -- explicitly reveals it -- lets everyone look at their phone at the
+    -- same moment.
+    ALTER TABLE questions ADD COLUMN IF NOT EXISTS visible BOOLEAN NOT NULL DEFAULT false;
 
     CREATE TABLE IF NOT EXISTS votes (
       question_id TEXT NOT NULL REFERENCES questions(id),
@@ -47,7 +46,29 @@ async function init() {
       weight INTEGER NOT NULL CHECK (weight >= 1),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- Single-row settings table (id is always 'main') for things the admin
+    -- configures once per AG rather than per question — currently just the
+    -- quorum target. Kept separate from 'voters' since it isn't per-person.
+    CREATE TABLE IF NOT EXISTS settings (
+      id TEXT PRIMARY KEY DEFAULT 'main',
+      expected_voters INTEGER,
+      quorum_threshold_percent INTEGER NOT NULL DEFAULT 50
+    );
+
+    -- Web Push subscriptions (one row per browser that opted in) so a
+    -- discreet notification can be sent when a question is revealed, even
+    -- if the tab is in the background or the browser is closed. The whole
+    -- subscription object is stored -- web-push needs it back verbatim when
+    -- sending, not just the endpoint.
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint TEXT PRIMARY KEY,
+      subscription JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
+
+  await pool.query(`INSERT INTO settings (id) VALUES ('main') ON CONFLICT (id) DO NOTHING`);
 }
 
 module.exports = { pool, init };
