@@ -2,66 +2,88 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Vote AG</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Vote AG — EPFL Rocket Team</title>
 
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon/apple-touch-icon.png" />
   <link rel="icon" href="/assets/favicon/favicon.ico" />
   <link rel="manifest" href="/site.webmanifest" />
-  <meta name="theme-color" content="#b92a30" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="preload" href="/assets/fonts/Aspekta-600.woff2" as="font" type="font/woff2" crossorigin />
 
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
-
-  <div class="container" style="max-width: 480px;">
-    <div class="brand-header">
-      <div class="brand-logo"><img src="/assets/logo.png" alt="EPFL Rocket Team" /></div>
-      <div class="brand-title">
-        <h1>Vote AG</h1>
-        <p id="connection-status" class="muted">EPFL Rocket Team</p>
+  <div class="container narrow">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="/assets/ert-rocket.svg" alt="" />
+        <div class="brand-name"><b>Vote AG</b><span>EPFL Rocket Team</span></div>
       </div>
+      <div class="topbar-spacer"></div>
+      <span id="connection-status" class="status">Connexion…</span>
+    </header>
+
+    <button id="enable-push-btn" class="btn btn-sm btn-block hidden" type="button" style="margin-bottom: 16px;">Activer les notifications</button>
+
+    <!-- Procuration : qui vote, pour combien de personnes -->
+    <div id="proxy-banner" class="proxy-banner hidden">
+      <div class="votes-n" id="proxy-votes-n">3</div>
+      <p id="proxy-banner-text"></p>
     </div>
-
-    <button id="enable-push-btn" class="btn-secondary btn-block hidden" type="button" style="margin-bottom: 16px;">Activer les notifications</button>
-
-    <!-- Bannière d'identité — visible uniquement avec un lien de procuration -->
-    <div id="proxy-banner" class="proxy-banner hidden"></div>
 
     <!-- Lien de procuration invalide -->
-    <div id="invalid-token-state" class="hidden">
-      <div class="card" style="border-color: var(--color-accent);">
-        <h2 style="margin-top: 0;">Lien invalide</h2>
-        <p class="muted">Ce lien de vote n'est pas valide. Contacte le président si tu penses que c'est une erreur.</p>
+    <div id="invalid-token-state" class="card hidden">
+      <span class="eyebrow">Lien invalide</span>
+      <h2>Ce lien de vote n'est pas valide</h2>
+      <p class="muted" style="margin: 0;">Il a peut-être été révoqué. Contacte le comité si tu penses que c'est une erreur.</p>
+    </div>
+
+    <!-- En attente -->
+    <div id="waiting-state" class="state-screen hidden">
+      <img class="rocket-wait" src="/assets/ert-rocket.svg" alt="" />
+      <h2>En attente de la prochaine question</h2>
+      <p class="muted">Elle apparaîtra ici automatiquement dès son ouverture.<br />Garde cette page ouverte.</p>
+    </div>
+
+    <!-- Question ouverte -->
+    <div id="voting-state" class="card accent hidden">
+      <div class="card-head">
+        <span class="badge badge-open">Vote ouvert</span>
+        <span id="countdown" class="countdown hidden"></span>
       </div>
-    </div>
+      <h1 id="question-text" class="question-text"></h1>
 
-    <!-- En attente d'une question ouverte -->
-    <div id="waiting-state" class="waiting-state hidden">
-      <div class="brand-logo" style="width: 56px; height: 56px;"><img src="/assets/logo.png" alt="" /></div>
-      <h2>En attente…</h2>
-      <p>La prochaine question apparaîtra ici dès qu'elle sera ouverte.</p>
-    </div>
+      <!-- un seul bulletin (vote normal) -->
+      <div id="single-ballot" class="choices hidden"></div>
 
-    <!-- Question ouverte — vote -->
-    <div id="voting-state" class="hidden">
-      <div class="card">
-        <h2 id="question-text" style="margin-top: 0;"></h2>
-        <div id="choices"></div>
-        <p id="vote-status" class="vote-status"></p>
+      <!-- plusieurs bulletins (procurations) -->
+      <div id="multi-ballot" class="hidden">
+        <div class="same-for-all">
+          <span class="label">Même choix pour toutes mes voix</span>
+          <div id="same-for-all-chips" class="chip-row"></div>
+        </div>
+        <div id="ballots" class="ballots"></div>
+        <div class="progress-line"><span id="ballots-progress"></span></div>
       </div>
+
+      <p id="vote-status" class="vote-status" aria-live="polite"></p>
     </div>
 
-    <!-- Question tout juste fermée -->
-    <div id="closed-state" class="closed-state hidden">
-      <h2>Vote terminé</h2>
-      <p class="muted">Merci d'avoir participé. En attente de la prochaine question…</p>
+    <!-- Question tout juste fermée : résultat -->
+    <div id="closed-state" class="card hidden">
+      <span class="eyebrow">Vote terminé</span>
+      <h2 id="closed-question-text"></h2>
+      <div id="closed-results"></div>
+      <p id="closed-my-vote" class="muted small" style="margin: 18px 0 0;"></p>
+      <p class="faint small" style="margin: 8px 0 0;">En attente de la prochaine question…</p>
     </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/common.js"></script>
   <script src="/js/voter.js"></script>
 </body>
 </html>

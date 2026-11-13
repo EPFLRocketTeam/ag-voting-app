@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 188 344" role="img" aria-label="EPFL Rocket Team">
+  <path fill="#fff" d="M2 218H34V317L2 341Z"/>
+  <path fill="#fff" d="M78 218H110V317L94 343L78 317Z"/>
+  <path fill="#fff" d="M154 218H186V341L154 317Z"/>
+  <path fill="#e20816" d="M2 170A374.6 374.6 0 0 1 94 .5A374.6 374.6 0 0 1 186 170L153.5 170A278.5 278.5 0 0 0 94 49.5A278.5 278.5 0 0 0 34.5 170Z"/>
+  <circle cx="94" cy="148.5" r="21.75" fill="#e20816"/>
+  <path fill="#fff" d="M90 136h8v9h9v8h-9v9h-8v-9h-9v-8h9z"/>
+</svg>

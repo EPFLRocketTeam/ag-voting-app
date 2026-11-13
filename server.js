@@ -10,9 +10,11 @@
 // Proxy ("procuration") voting: a normal voter is anonymous (random id
 // generated client-side, always worth 1 vote). A proxy holder instead uses a
 // personal link containing a token the admin generated for them from the
-// President's private list; the vote weight tied to that token lives only
-// in the `voters` table and is looked up server-side — a client can never
-// claim extra weight for itself, whatever it sends.
+// President's private list. Since v2 a proxy holder gets one separate
+// ballot per person they represent (ballot 0 = their own vote, ballots
+// 1..n = each proxy, named), so they can vote differently for each one.
+// How many ballots a token has lives only in the `voters` table and is
+// looked up server-side — a client can never claim extra ballots.
 
 require('dotenv').config();
 const path = require('path');
@@ -54,6 +56,11 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'voter.html'));
 });
 
+// Projector view for the room (big question, live count, timer, results).
+app.get('/ecran', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'screen.html'));
+});
+
 // Wrap async route handlers so a thrown/rejected error reaches Express's
 // error middleware instead of crashing the process or hanging the request.
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -70,7 +77,24 @@ function questionRow(q) {
     options: q.options ?? null, // JSONB comes back already parsed; only set for 'custom'
     status: q.status,
     orderIndex: q.order_index,
+    // Countdown (optional): sent as "milliseconds left" rather than an
+    // absolute time, so a phone with a wrong clock still shows it right.
+    timerRemainingMs: q.timer_ends_at ? Math.max(0, new Date(q.timer_ends_at).getTime() - Date.now()) : null,
+    timerAutoClose: Boolean(q.timer_auto_close),
   };
+}
+
+// The ballots a proxy link can cast: 0 = the holder's own vote, then one per
+// represented person. Older links (created before v2, weight only, no names)
+// get generic labels for their extra ballots.
+function ballotsFor(voterRow) {
+  const names = Array.isArray(voterRow.proxy_names) ? voterRow.proxy_names : [];
+  const count = Math.max(voterRow.weight, 1 + names.length);
+  const ballots = [{ index: 0, label: voterRow.display_name, own: true }];
+  for (let i = 1; i < count; i++) {
+    ballots.push({ index: i, label: names[i - 1] || `Procuration ${i}`, own: false });
+  }
+  return ballots;
 }
 
 function choicesFor(q) {
@@ -128,6 +152,50 @@ async function notifyAllSubscribers(payload) {
   );
 }
 
+// ---------- closing + countdown timers ----------
+
+const timers = new Map(); // questionId -> setTimeout handle (auto-close only)
+
+function clearTimer(questionId) {
+  const t = timers.get(questionId);
+  if (t) clearTimeout(t);
+  timers.delete(questionId);
+}
+
+// Single place a question gets closed (admin button, opening another
+// question, or a countdown running out): status + timer reset in the DB,
+// then the final tally is broadcast — that's the moment results go public.
+async function closeQuestionById(questionId) {
+  clearTimer(questionId);
+  const { rowCount } = await pool.query(
+    "UPDATE questions SET status = 'closed', closed_at = now(), timer_ends_at = NULL WHERE id = $1 AND status = 'open'",
+    [questionId]
+  );
+  const { tally, total } = await tallyFor(questionId);
+  if (rowCount > 0) io.emit('question:closed', { questionId, tally, total });
+  return { tally, total };
+}
+
+function scheduleAutoClose(questionId, remainingMs) {
+  clearTimer(questionId);
+  timers.set(
+    questionId,
+    setTimeout(() => {
+      timers.delete(questionId);
+      closeQuestionById(questionId).catch((err) => console.error('Auto-close failed:', err.message));
+    }, Math.max(0, remainingMs))
+  );
+}
+
+function emitTimer(q) {
+  const row = questionRow(q);
+  io.emit('timer:update', {
+    questionId: row.id,
+    remainingMs: row.timerRemainingMs,
+    autoClose: row.timerAutoClose,
+  });
+}
+
 // simple shared-PIN auth for the admin/presenter endpoints — this isn't
 // trying to be a real user auth system, just enough to stop a random voter
 // from opening/closing questions from their phone.
@@ -178,13 +246,17 @@ app.get(
   })
 );
 
-// Full breakdown with percentages — only meant to be shown once a question
-// is closed (the frontend enforces that; the endpoint itself stays simple).
+// Full breakdown with percentages — only once a question is closed. Refused
+// while it's open: question ids are visible to every voter, so leaving this
+// open would let anyone read the live breakdown with a single request.
 app.get(
   '/api/questions/:id/results',
   wrap(async (req, res) => {
     const q = await getQuestion(req.params.id);
     if (!q) return res.status(404).json({ error: 'Question introuvable.' });
+    if (q.status !== 'closed') {
+      return res.status(403).json({ error: 'Les résultats sont disponibles après la fermeture du vote.' });
+    }
     const { tally, total } = await tallyFor(q.id);
     res.json({ question: questionRow(q), tally, total });
   })
@@ -295,13 +367,11 @@ app.post(
       [q.id]
     );
     for (const other of openOthers) {
-      await pool.query("UPDATE questions SET status = 'closed', closed_at = now() WHERE id = $1", [other.id]);
-      const { tally, total } = await tallyFor(other.id);
-      io.emit('question:closed', { questionId: other.id, tally, total });
+      await closeQuestionById(other.id);
     }
 
     const { rows } = await pool.query(
-      "UPDATE questions SET status = 'open', opened_at = now() WHERE id = $1 RETURNING *",
+      "UPDATE questions SET status = 'open', opened_at = now(), timer_ends_at = NULL, timer_auto_close = false WHERE id = $1 RETURNING *",
       [q.id]
     );
     io.emit('question:open', questionRow(rows[0]));
@@ -323,64 +393,161 @@ app.post(
     if (q.status !== 'open') {
       return res.status(400).json({ error: 'Seule une question ouverte peut être fermée.' });
     }
-    await pool.query("UPDATE questions SET status = 'closed', closed_at = now() WHERE id = $1", [q.id]);
-    const { tally, total } = await tallyFor(q.id);
-    io.emit('question:closed', { questionId: q.id, tally, total });
+    const { tally, total } = await closeQuestionById(q.id);
     res.json({ questionId: q.id, tally, total });
+  })
+);
+
+// Countdown for the open question: shown on the projector and on phones.
+// With autoClose the server closes the question itself when it runs out;
+// without it, it's only a visual cue and the presenter closes by hand.
+app.post(
+  '/api/questions/:id/timer',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const q = await getQuestion(req.params.id);
+    if (!q) return res.status(404).json({ error: 'Question introuvable.' });
+    if (q.status !== 'open') {
+      return res.status(400).json({ error: 'Le minuteur ne peut être lancé que sur la question ouverte.' });
+    }
+    const seconds = parseInt((req.body || {}).seconds, 10);
+    if (!Number.isInteger(seconds) || seconds < 5 || seconds > 3600) {
+      return res.status(400).json({ error: 'Durée invalide (entre 5 secondes et 60 minutes).' });
+    }
+    const autoClose = Boolean((req.body || {}).autoClose);
+    const { rows } = await pool.query(
+      "UPDATE questions SET timer_ends_at = now() + ($1 || ' seconds')::interval, timer_auto_close = $2 WHERE id = $3 RETURNING *",
+      [String(seconds), autoClose, q.id]
+    );
+    if (autoClose) scheduleAutoClose(q.id, seconds * 1000);
+    else clearTimer(q.id);
+    emitTimer(rows[0]);
+    res.json(questionRow(rows[0]));
+  })
+);
+
+app.delete(
+  '/api/questions/:id/timer',
+  requireAdmin,
+  wrap(async (req, res) => {
+    clearTimer(req.params.id);
+    const { rows } = await pool.query(
+      'UPDATE questions SET timer_ends_at = NULL, timer_auto_close = false WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Question introuvable.' });
+    emitTimer(rows[0]);
+    res.json(questionRow(rows[0]));
   })
 );
 
 // ---------- voting ----------
 
+// Resolves who is voting: a proxy link (token) -> its ballots, or an
+// anonymous phone (voterId) -> a single ballot. Returns null + sends the
+// error response if the identity is invalid.
+async function resolveVoter(body, res) {
+  const { token, voterId } = body;
+  if (token) {
+    const { rows } = await pool.query('SELECT * FROM voters WHERE token = $1', [token]);
+    if (!rows[0]) {
+      res.status(403).json({ error: 'Lien de vote invalide ou expiré.' });
+      return null;
+    }
+    return { rowId: token, ballots: ballotsFor(rows[0]) };
+  }
+  if (!voterId || typeof voterId !== 'string') {
+    res.status(400).json({ error: 'voterId est requis pour un vote anonyme.' });
+    return null;
+  }
+  return { rowId: voterId, ballots: [{ index: 0, label: null, own: true }] };
+}
+
+// Cast or change votes. Body: { questionId, token | voterId, and either
+//   choice (+ optional ballot, default 0)  -- one ballot, or
+//   votes: [{ ballot, choice }, ...]       -- several at once ("même choix
+//                                             pour toutes mes voix") }.
+// Every ballot is worth exactly 1 vote; which ballots a voter may use is
+// decided only by the server (resolveVoter), never by the request.
 app.post(
   '/api/vote',
   wrap(async (req, res) => {
-    const { questionId, voterId, choice, token } = req.body || {};
-    if (!questionId || !choice) {
-      return res.status(400).json({ error: 'questionId et choice sont requis.' });
+    const body = req.body || {};
+    const { questionId } = body;
+    if (!questionId) return res.status(400).json({ error: 'questionId est requis.' });
+
+    let votes = Array.isArray(body.votes)
+      ? body.votes
+      : [{ ballot: body.ballot === undefined ? 0 : body.ballot, choice: body.choice }];
+    if (votes.length === 0 || votes.some((v) => !v || !v.choice)) {
+      return res.status(400).json({ error: 'Choix manquant.' });
     }
+
     const q = await getQuestion(questionId);
     if (!q) return res.status(404).json({ error: 'Question introuvable.' });
     if (q.status !== 'open') {
       return res.status(400).json({ error: "Cette question n'est pas actuellement ouverte au vote." });
     }
-    if (!choicesFor(q).includes(choice)) {
+    const allowedChoices = choicesFor(q);
+    if (votes.some((v) => !allowedChoices.includes(v.choice))) {
       return res.status(400).json({ error: 'Choix invalide pour cette question.' });
     }
 
-    // Weight is NEVER taken from the request body — only from a server-side
-    // lookup. Anonymous voters (no token) are always worth exactly 1 vote;
-    // a proxy holder's weight comes only from their token's row in `voters`,
-    // set up ahead of time by the admin from the President's private list.
-    let rowId, weight;
-    if (token) {
-      const { rows } = await pool.query('SELECT * FROM voters WHERE token = $1', [token]);
-      if (!rows[0]) {
-        return res.status(403).json({ error: 'Lien de vote invalide ou expiré.' });
-      }
-      rowId = token;
-      weight = rows[0].weight;
-    } else {
-      if (!voterId) return res.status(400).json({ error: 'voterId est requis pour un vote anonyme.' });
-      rowId = voterId;
-      weight = 1;
+    const voter = await resolveVoter(body, res);
+    if (!voter) return;
+    const validBallots = new Set(voter.ballots.map((b) => b.index));
+    votes = votes.map((v) => ({ ballot: parseInt(v.ballot, 10), choice: v.choice }));
+    if (votes.some((v) => !validBallots.has(v.ballot))) {
+      return res.status(403).json({ error: 'Bulletin invalide pour ce lien.' });
     }
 
-    // One row per (question, voter) — voting again just overwrites the
-    // previous choice, so someone can change their mind while the question
-    // is still open.
-    await pool.query(
-      `INSERT INTO votes (question_id, voter_id, choice, weight) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (question_id, voter_id) DO UPDATE SET choice = EXCLUDED.choice, weight = EXCLUDED.weight, created_at = now()`,
-      [questionId, rowId, choice, weight]
-    );
+    // One row per (question, voter, ballot) — voting again overwrites, so a
+    // choice can be changed while the question is still open.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const v of votes) {
+        await client.query(
+          `INSERT INTO votes (question_id, voter_id, ballot, choice, weight) VALUES ($1, $2, $3, $4, 1)
+           ON CONFLICT (question_id, voter_id, ballot)
+           DO UPDATE SET choice = EXCLUDED.choice, weight = 1, created_at = now()`,
+          [questionId, voter.rowId, v.ballot, v.choice]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
 
     // Only this one safe aggregate number is broadcast while voting is open —
     // never the breakdown by choice. Results stay hidden until a question
     // closes; this is a deliberate requirement, not just a UI choice.
     const voteCount = await voteRowCountFor(questionId);
     io.emit('vote-count:update', { questionId, voteCount });
-    res.json({ ok: true, weight });
+    res.json({ ok: true, saved: votes.length });
+  })
+);
+
+// A voter's own current choices for a question (so a reloaded phone shows
+// what it already voted). Only reachable with the voter's own secret id or
+// proxy token — never anyone else's.
+app.get(
+  '/api/my-votes',
+  wrap(async (req, res) => {
+    const { questionId } = req.query;
+    if (!questionId) return res.status(400).json({ error: 'questionId est requis.' });
+    const voter = await resolveVoter(req.query, res);
+    if (!voter) return;
+    const { rows } = await pool.query(
+      'SELECT ballot, choice FROM votes WHERE question_id = $1 AND voter_id = $2',
+      [questionId, voter.rowId]
+    );
+    const choices = {};
+    for (const r of rows) choices[r.ballot] = r.choice;
+    res.json({ choices });
   })
 );
 
@@ -429,7 +596,8 @@ app.get(
   wrap(async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM voters WHERE token = $1', [req.params.token]);
     if (!rows[0]) return res.status(404).json({ error: 'Lien de vote invalide.' });
-    res.json({ displayName: rows[0].display_name, weight: rows[0].weight });
+    const ballots = ballotsFor(rows[0]);
+    res.json({ displayName: rows[0].display_name, weight: ballots.length, ballots });
   })
 );
 
@@ -438,7 +606,17 @@ app.get(
   requireAdmin,
   wrap(async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM voters ORDER BY created_at ASC');
-    res.json(rows.map((v) => ({ token: v.token, displayName: v.display_name, weight: v.weight })));
+    res.json(
+      rows.map((v) => {
+        const ballots = ballotsFor(v);
+        return {
+          token: v.token,
+          displayName: v.display_name,
+          weight: ballots.length,
+          proxyNames: ballots.filter((b) => !b.own).map((b) => b.label),
+        };
+      })
+    );
   })
 );
 
@@ -446,22 +624,29 @@ app.post(
   '/api/voters',
   requireAdmin,
   wrap(async (req, res) => {
-    const { displayName, weight } = req.body || {};
+    const { displayName, proxyNames } = req.body || {};
     if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
       return res.status(400).json({ error: 'Le nom est requis.' });
     }
-    const weightNum = parseInt(weight, 10);
-    if (!Number.isInteger(weightNum) || weightNum < 1) {
-      return res.status(400).json({ error: 'Le poids doit être un entier >= 1.' });
+    const names = (Array.isArray(proxyNames) ? proxyNames : [])
+      .map((n) => (typeof n === 'string' ? n.trim() : ''))
+      .filter(Boolean);
+    if (names.length === 0) {
+      return res.status(400).json({ error: 'Ajoute au moins une personne représentée (procuration).' });
+    }
+    if (names.length > 20) {
+      return res.status(400).json({ error: 'Maximum 20 procurations par personne.' });
     }
 
     const token = uuidv4();
-    await pool.query('INSERT INTO voters (token, display_name, weight) VALUES ($1, $2, $3)', [
+    const weight = 1 + names.length;
+    await pool.query('INSERT INTO voters (token, display_name, weight, proxy_names) VALUES ($1, $2, $3, $4)', [
       token,
       displayName.trim(),
-      weightNum,
+      weight,
+      JSON.stringify(names),
     ]);
-    res.status(201).json({ token, displayName: displayName.trim(), weight: weightNum });
+    res.status(201).json({ token, displayName: displayName.trim(), weight, proxyNames: names });
   })
 );
 
@@ -492,17 +677,113 @@ app.get(
   '/api/export/results',
   requireAdmin,
   wrap(async (req, res) => {
-    const { rows: questions } = await pool.query('SELECT * FROM questions ORDER BY order_index ASC');
-    const results = [];
-    for (const q of questions) {
-      if (q.status === 'closed') {
-        const { tally, total } = await tallyFor(q.id);
-        results.push({ ...questionRow(q), tally, total });
-      } else {
-        results.push({ ...questionRow(q), tally: null, total: null });
-      }
+    res.json(await buildResultsSnapshot());
+  })
+);
+
+// ---------- projector screen (read-only, no PIN) ----------
+//
+// What the room sees: the open question with its live vote count (never the
+// breakdown), or else the last closed question with its final result —
+// the same information that is shown publicly anyway once a vote closes.
+app.get(
+  '/api/screen',
+  wrap(async (req, res) => {
+    const { rows: openRows } = await pool.query("SELECT * FROM questions WHERE status = 'open' LIMIT 1");
+    if (openRows[0]) {
+      const voteCount = await voteRowCountFor(openRows[0].id);
+      return res.json({ mode: 'open', question: questionRow(openRows[0]), voteCount });
     }
-    res.json(results);
+    const { rows: closedRows } = await pool.query(
+      "SELECT * FROM questions WHERE status = 'closed' ORDER BY closed_at DESC NULLS LAST LIMIT 1"
+    );
+    if (closedRows[0]) {
+      const { tally, total } = await tallyFor(closedRows[0].id);
+      return res.json({ mode: 'closed', question: questionRow(closedRows[0]), tally, total });
+    }
+    res.json({ mode: 'idle' });
+  })
+);
+
+// ---------- archive + new AG ----------
+
+async function buildResultsSnapshot() {
+  const { rows: questions } = await pool.query('SELECT * FROM questions ORDER BY order_index ASC');
+  const results = [];
+  for (const q of questions) {
+    if (q.status === 'closed') {
+      const { tally, total } = await tallyFor(q.id);
+      results.push({ ...questionRow(q), tally, total });
+    } else {
+      results.push({ ...questionRow(q), tally: null, total: null });
+    }
+  }
+  return results;
+}
+
+// "Nouvelle AG": saves the finished session as an archive (questions + final
+// results), then clears questions, votes and — optionally — the proxy links,
+// so the next AG starts from an empty board. Refused while a question is open.
+app.post(
+  '/api/session/new',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const { title, deleteVoters } = req.body || {};
+    const { rows: openRows } = await pool.query("SELECT id FROM questions WHERE status = 'open'");
+    if (openRows.length) {
+      return res.status(400).json({ error: "Ferme la question ouverte avant de démarrer une nouvelle AG." });
+    }
+    const snapshot = await buildResultsSnapshot();
+    const archiveTitle =
+      (typeof title === 'string' && title.trim()) || `AG du ${new Date().toLocaleDateString('fr-CH')}`;
+
+    const client = await pool.connect();
+    let archiveId = null;
+    try {
+      await client.query('BEGIN');
+      if (snapshot.length) {
+        archiveId = uuidv4();
+        await client.query('INSERT INTO archives (id, title, data) VALUES ($1, $2, $3)', [
+          archiveId,
+          archiveTitle,
+          JSON.stringify({ questions: snapshot }),
+        ]);
+      }
+      await client.query('DELETE FROM votes');
+      await client.query('DELETE FROM questions');
+      if (deleteVoters) await client.query('DELETE FROM voters');
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+    for (const id of timers.keys()) clearTimer(id);
+    io.emit('questions:changed');
+    io.emit('session:reset');
+    res.json({ ok: true, archiveId, archivedQuestions: snapshot.length });
+  })
+);
+
+app.get(
+  '/api/archives',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const { rows } = await pool.query(
+      "SELECT id, title, created_at, jsonb_array_length(data->'questions') AS question_count FROM archives ORDER BY created_at DESC"
+    );
+    res.json(rows.map((r) => ({ id: r.id, title: r.title, createdAt: r.created_at, questionCount: r.question_count })));
+  })
+);
+
+app.get(
+  '/api/archives/:id',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM archives WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Archive introuvable.' });
+    res.json({ id: rows[0].id, title: rows[0].title, createdAt: rows[0].created_at, questions: rows[0].data.questions });
   })
 );
 
@@ -525,6 +806,15 @@ async function main() {
     console.error('Could not connect to Postgres / initialize schema:', err.message);
     console.error('Check DATABASE_URL in .env and that Postgres is running (see docker-compose.yml for local dev).');
     process.exit(1);
+  }
+
+  // A countdown with auto-close that was running when the server restarted
+  // (e.g. a redeploy) is re-armed, or closed right away if it already ran out.
+  const { rows: running } = await pool.query(
+    "SELECT * FROM questions WHERE status = 'open' AND timer_ends_at IS NOT NULL AND timer_auto_close"
+  );
+  for (const q of running) {
+    scheduleAutoClose(q.id, new Date(q.timer_ends_at).getTime() - Date.now());
   }
 
   server.listen(PORT, () => {
