@@ -1,682 +1,563 @@
-// admin.js — panneau présentateur : PIN, gestion des questions, compteur en
-// direct (sans détail), résultats finaux, gestion des procurations.
+// admin.js — presenter panel: PIN, questions, live session (count only,
+// timer, close), proxy links with named ballots, exports, new AG + archives.
 //
-// Pas de framework, pas d'étape de build — juste du DOM classique. L'état
-// tient dans un seul objet `state` en haut du fichier pour que tout ce que
-// la page retient soit visible d'un coup d'œil.
+// No framework, no build step — plain DOM. Everything the page remembers
+// lives in `state` below.
 
-const STANDARD_LABELS = ['Oui', 'Non', 'Blanc'];
+const { api: baseApi, escapeHtml, choicesOf, withEndsAt, paintCountdown, onTick, resultsBlock, toast, copy, setStatus } = window.AG;
 
 const state = {
-  adminPin: localStorage.getItem('agVotingAdminPin') || null,
-  questions: [],              // liste complète depuis GET /api/questions
-  voteCounts: {},             // questionId -> nombre de votes reçus (pendant que c'est ouvert, sans détail)
-  finalResults: {},           // questionId -> { tally, total } (uniquement une fois fermé)
-  editingQuestionId: null,    // null = formulaire "Nouvelle question" ; sinon on modifie ce brouillon
-  voters: [],                 // liste des procurations créées
+  pin: readPin(),
+  questions: [],
+  voteCounts: {}, // questionId -> vote rows received (no breakdown while open)
+  finalResults: {}, // questionId -> { tally, total } (closed only)
+  editingQuestionId: null,
+  voters: [],
+  archives: [],
+  socket: null,
 };
 
-// ---------- références DOM ----------
+const $ = (id) => document.getElementById(id);
 
-const el = {
-  pinScreen: document.getElementById('pin-screen'),
-  pinInput: document.getElementById('pin-input'),
-  pinSubmit: document.getElementById('pin-submit'),
-  pinError: document.getElementById('pin-error'),
-
-  dashboard: document.getElementById('dashboard'),
-  connectionStatus: document.getElementById('connection-status'),
-
-  liveSection: document.getElementById('live-section'),
-  liveQuestionText: document.getElementById('live-question-text'),
-  liveVoteCount: document.getElementById('live-vote-count'),
-  liveVoteCountLabel: document.getElementById('live-vote-count-label'),
-  closeQuestionBtn: document.getElementById('close-question-btn'),
-
-  formTitle: document.getElementById('form-title'),
-  questionText: document.getElementById('question-text'),
-  questionType: document.getElementById('question-type'),
-  optionsField: document.getElementById('options-field'),
-  optionsList: document.getElementById('options-list'),
-  addOptionBtn: document.getElementById('add-option-btn'),
-  saveQuestionBtn: document.getElementById('save-question-btn'),
-  cancelEditBtn: document.getElementById('cancel-edit-btn'),
-  formError: document.getElementById('form-error'),
-
-  questionsEmpty: document.getElementById('questions-empty'),
-  questionsList: document.getElementById('questions-list'),
-
-  voterName: document.getElementById('voter-name'),
-  voterWeight: document.getElementById('voter-weight'),
-  createVoterBtn: document.getElementById('create-voter-btn'),
-  voterFormError: document.getElementById('voter-form-error'),
-  votersList: document.getElementById('voters-list'),
-
-  joinQrCanvas: document.getElementById('join-qr-canvas'),
-  joinQrUrl: document.getElementById('join-qr-url'),
-  copyJoinLinkBtn: document.getElementById('copy-join-link-btn'),
-
-  exportPdfBtn: document.getElementById('export-pdf-btn'),
-  exportCsvBtn: document.getElementById('export-csv-btn'),
-  endVotingHint: document.getElementById('end-voting-hint'),
-
-  downloadTemplateBtn: document.getElementById('download-template-btn'),
-  importCsvInput: document.getElementById('import-csv-input'),
-  importCsvBtn: document.getElementById('import-csv-btn'),
-  importStatus: document.getElementById('import-status'),
-};
-
-// ---------- petit utilitaire d'appel API ----------
-
-async function api(path, { method = 'GET', body, auth = false } = {}) {
-  const headers = {};
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (auth) headers['x-admin-token'] = state.adminPin;
-
-  const res = await fetch(path, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-
-  const data = res.status === 204 ? null : await res.json().catch(() => null);
-
-  if (!res.ok) {
-    throw new Error((data && data.error) || `Échec de la requête (${res.status})`);
-  }
-  return data;
+function readPin() {
+  try { return localStorage.getItem('agVotingAdminPin'); } catch { return null; }
+}
+function savePin(pin) {
+  try { pin ? localStorage.setItem('agVotingAdminPin', pin) : localStorage.removeItem('agVotingAdminPin'); } catch { /* private mode */ }
 }
 
-// ---------- écran PIN ----------
+// Admin calls carry the PIN; a 401 means it's wrong/stale -> back to the PIN screen.
+async function api(path, opts = {}) {
+  try {
+    return await baseApi(path, { ...opts, pin: opts.auth ? state.pin : undefined });
+  } catch (err) {
+    if (err.status === 401 && opts.auth) logout('PIN refusé — reconnecte-toi.');
+    throw err;
+  }
+}
+
+// ---------- PIN ----------
 
 async function tryPin(pin) {
-  el.pinError.classList.add('hidden');
-  el.pinSubmit.disabled = true;
+  $('pin-error').classList.add('hidden');
+  $('pin-submit').disabled = true;
   try {
-    await api('/api/admin/verify', { method: 'POST', body: { pin } });
-    state.adminPin = pin;
-    localStorage.setItem('agVotingAdminPin', pin);
+    await baseApi('/api/admin/verify', { method: 'POST', body: { pin } });
+    state.pin = pin;
+    savePin(pin);
     enterDashboard();
-  } catch (err) {
-    el.pinError.textContent = 'PIN incorrect — réessaie.';
-    el.pinError.classList.remove('hidden');
+  } catch {
+    $('pin-error').textContent = 'PIN incorrect — réessaie.';
+    $('pin-error').classList.remove('hidden');
   } finally {
-    el.pinSubmit.disabled = false;
+    $('pin-submit').disabled = false;
   }
 }
 
-el.pinSubmit.addEventListener('click', () => {
-  const pin = el.pinInput.value.trim();
+$('pin-submit').addEventListener('click', () => {
+  const pin = $('pin-input').value.trim();
   if (pin) tryPin(pin);
 });
-el.pinInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') el.pinSubmit.click();
+$('pin-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('pin-submit').click();
 });
 
-function enterDashboard() {
-  el.pinScreen.classList.add('hidden');
-  el.dashboard.classList.remove('hidden');
-  connectSocket();
-  refreshQuestions();
-  refreshVoters();
+function logout(message) {
+  state.pin = null;
+  savePin(null);
+  if (state.socket) {
+    state.socket.disconnect();
+    state.socket = null;
+  }
+  $('dashboard').classList.add('hidden');
+  $('pin-screen').classList.remove('hidden');
+  $('pin-input').value = '';
+  if (message) {
+    $('pin-error').textContent = message;
+    $('pin-error').classList.remove('hidden');
+  }
+}
+$('logout-btn').addEventListener('click', () => logout());
+
+async function enterDashboard() {
+  $('pin-screen').classList.add('hidden');
+  $('dashboard').classList.remove('hidden');
+  selectTab((location.hash || '#seance').slice(1));
   renderJoinQr();
+  connectSocket();
+  try {
+    await Promise.all([refreshQuestions(), refreshVoters(), refreshArchives()]);
+  } catch (err) {
+    console.error(err);
+  }
 }
 
-// ---------- rejoindre en un scan ----------
-//
-// The public join link (root '/', see server.js) always counts for 1 vote,
-// exactly like typing the URL by hand -- the QR code is just a shortcut to
-// the same page, never a separate identity or a procuration link.
+// ---------- tabs ----------
+
+const TABS = ['seance', 'preparer', 'procurations', 'cloture'];
+function selectTab(name) {
+  if (!TABS.includes(name)) name = 'seance';
+  document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+  TABS.forEach((t) => $(`tab-${t}`).classList.toggle('hidden', t !== name));
+  if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
+}
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => selectTab(t.dataset.tab)));
+
+// ---------- join QR ----------
+
 function renderJoinQr() {
   const url = `${location.origin}/`;
-  el.joinQrUrl.textContent = url;
-  el.joinQrCanvas.innerHTML = '';
-  const canvas = document.createElement('canvas');
-  el.joinQrCanvas.appendChild(canvas);
-  window.QRCode.toCanvas(canvas, url, { width: 200, margin: 1 }, (err) => {
-    if (err) console.error('QR code generation failed:', err);
-  });
+  $('join-url').textContent = url;
+  window.QRCode.toCanvas($('join-qr'), url, { width: 200, margin: 0 }, () => {});
 }
+$('copy-join-link-btn').addEventListener('click', () => copy(`${location.origin}/`));
 
-el.copyJoinLinkBtn.addEventListener('click', async () => {
-  const url = `${location.origin}/`;
-  try {
-    await navigator.clipboard.writeText(url);
-  } catch {
-    prompt('Copie ce lien :', url);
-  }
-});
-
-// Si un PIN est déjà enregistré (visite précédente), on va direct au
-// panneau — le premier appel admin échouera vite s'il est périmé.
-if (state.adminPin) {
-  enterDashboard();
-}
-
-// ---------- formulaire question (création + modification partagent le même formulaire) ----------
+// ---------- question form ----------
 
 function addOptionRow(value = '') {
   const row = document.createElement('div');
-  row.style.display = 'flex';
-  row.style.gap = '8px';
-  row.style.marginBottom = '8px';
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = value;
-  input.placeholder = "Texte de l'option";
-  row.appendChild(input);
-
-  const removeBtn = document.createElement('button');
-  removeBtn.type = 'button';
-  removeBtn.className = 'btn-secondary';
-  removeBtn.textContent = '✕';
-  removeBtn.addEventListener('click', () => {
-    // On garde au moins 2 options pour une question personnalisée.
-    if (el.optionsList.children.length > 2) row.remove();
+  row.className = 'input-row';
+  row.innerHTML = `<input type="text" placeholder="Texte de l'option" /><button type="button" class="icon-btn" aria-label="Retirer">✕</button>`;
+  row.querySelector('input').value = value;
+  row.querySelector('button').addEventListener('click', () => {
+    if ($('options-list').children.length > 2) row.remove();
   });
-  row.appendChild(removeBtn);
-
-  el.optionsList.appendChild(row);
+  $('options-list').appendChild(row);
 }
-
 function getOptionValues() {
-  return Array.from(el.optionsList.querySelectorAll('input'))
-    .map((i) => i.value.trim())
-    .filter(Boolean);
+  return Array.from($('options-list').querySelectorAll('input')).map((i) => i.value.trim()).filter(Boolean);
 }
-
 function resetOptionsList(values = ['', '']) {
-  el.optionsList.innerHTML = '';
+  $('options-list').innerHTML = '';
   values.forEach((v) => addOptionRow(v));
 }
 
-el.questionType.addEventListener('change', () => {
-  const isCustom = el.questionType.value === 'custom';
-  el.optionsField.classList.toggle('hidden', !isCustom);
-  if (isCustom && el.optionsList.children.length === 0) resetOptionsList();
+$('question-type').addEventListener('change', () => {
+  const isCustom = $('question-type').value === 'custom';
+  $('options-field').classList.toggle('hidden', !isCustom);
+  if (isCustom && $('options-list').children.length === 0) resetOptionsList();
 });
-
-el.addOptionBtn.addEventListener('click', () => addOptionRow());
+$('add-option-btn').addEventListener('click', () => addOptionRow());
 
 function resetForm() {
   state.editingQuestionId = null;
-  el.formTitle.textContent = 'Nouvelle question';
-  el.saveQuestionBtn.textContent = 'Ajouter la question';
-  el.cancelEditBtn.classList.add('hidden');
-  el.questionText.value = '';
-  el.questionType.value = 'standard';
-  el.optionsField.classList.add('hidden');
+  $('form-title').textContent = 'Nouvelle question';
+  $('save-question-btn').textContent = 'Ajouter la question';
+  $('cancel-edit-btn').classList.add('hidden');
+  $('question-text').value = '';
+  $('question-type').value = 'standard';
+  $('options-field').classList.add('hidden');
   resetOptionsList();
-  el.formError.classList.add('hidden');
+  $('form-error').classList.add('hidden');
 }
+$('cancel-edit-btn').addEventListener('click', resetForm);
 
-el.cancelEditBtn.addEventListener('click', resetForm);
-
-function startEdit(question) {
-  state.editingQuestionId = question.id;
-  el.formTitle.textContent = 'Modifier la question';
-  el.saveQuestionBtn.textContent = 'Enregistrer les modifications';
-  el.cancelEditBtn.classList.remove('hidden');
-  el.questionText.value = question.text;
-  el.questionType.value = question.type;
-  if (question.type === 'custom') {
-    el.optionsField.classList.remove('hidden');
-    resetOptionsList(question.options && question.options.length ? question.options : ['', '']);
-  } else {
-    el.optionsField.classList.add('hidden');
-    resetOptionsList();
-  }
-  el.formError.classList.add('hidden');
+function startEdit(q) {
+  selectTab('preparer');
+  state.editingQuestionId = q.id;
+  $('form-title').textContent = 'Modifier la question';
+  $('save-question-btn').textContent = 'Enregistrer';
+  $('cancel-edit-btn').classList.remove('hidden');
+  $('question-text').value = q.text;
+  $('question-type').value = q.type;
+  $('options-field').classList.toggle('hidden', q.type !== 'custom');
+  resetOptionsList(q.type === 'custom' && q.options && q.options.length ? q.options : ['', '']);
+  $('form-error').classList.add('hidden');
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  $('question-text').focus();
 }
 
-el.saveQuestionBtn.addEventListener('click', async () => {
-  const text = el.questionText.value.trim();
-  const type = el.questionType.value;
+function showFormError(msg) {
+  $('form-error').textContent = msg;
+  $('form-error').classList.remove('hidden');
+}
+
+$('save-question-btn').addEventListener('click', async () => {
+  const text = $('question-text').value.trim();
+  const type = $('question-type').value;
   const options = type === 'custom' ? getOptionValues() : undefined;
-
-  el.formError.classList.add('hidden');
+  $('form-error').classList.add('hidden');
   if (!text) return showFormError('Le texte de la question est requis.');
-  if (type === 'custom' && (!options || options.length < 2)) {
-    return showFormError('Ajoute au moins 2 options.');
-  }
+  if (type === 'custom' && (!options || options.length < 2)) return showFormError('Ajoute au moins 2 options.');
 
-  el.saveQuestionBtn.disabled = true;
+  $('save-question-btn').disabled = true;
   try {
     const body = { text, type, options };
     if (state.editingQuestionId) {
       await api(`/api/questions/${state.editingQuestionId}`, { method: 'PATCH', body, auth: true });
+      toast('Question modifiée');
     } else {
       await api('/api/questions', { method: 'POST', body, auth: true });
+      toast('Question ajoutée');
     }
     resetForm();
     await refreshQuestions();
+    $('question-text').focus();
   } catch (err) {
     showFormError(err.message);
   } finally {
-    el.saveQuestionBtn.disabled = false;
+    $('save-question-btn').disabled = false;
   }
 });
+$('question-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && $('question-type').value === 'standard') $('save-question-btn').click();
+});
 
-function showFormError(message) {
-  el.formError.textContent = message;
-  el.formError.classList.remove('hidden');
-}
-
-// ---------- récupération + affichage des questions ----------
+// ---------- questions: fetch + render ----------
 
 async function refreshQuestions() {
-  state.questions = await api('/api/questions');
+  const questions = await api('/api/questions');
+  state.questions = questions.map(withEndsAt);
 
   const open = state.questions.find((q) => q.status === 'open');
-  if (open && state.voteCounts[open.id] === undefined) {
+  if (open) {
     const res = await api(`/api/questions/${open.id}/vote-count`);
     state.voteCounts[open.id] = res.voteCount;
   }
-
-  // Pour les questions déjà fermées (par ex. après un rechargement de page),
-  // on récupère leur résultat final une fois, s'il n'est pas déjà en cache.
-  for (const q of state.questions) {
-    if (q.status === 'closed' && !state.finalResults[q.id]) {
-      const res = await api(`/api/questions/${q.id}/results`);
-      state.finalResults[q.id] = { tally: res.tally, total: res.total };
-    }
-  }
-
+  // Closed questions: fetch the final result once (cached afterwards).
+  await Promise.all(
+    state.questions
+      .filter((q) => q.status === 'closed' && !state.finalResults[q.id])
+      .map(async (q) => {
+        const res = await api(`/api/questions/${q.id}/results`);
+        state.finalResults[q.id] = { tally: res.tally, total: res.total };
+      })
+  );
   renderAll();
 }
 
 function renderAll() {
-  renderLiveSection();
+  renderLive();
   renderQuestionsList();
-  updateExportGating();
+  renderClosure();
+  const open = state.questions.some((q) => q.status === 'open');
+  const drafts = state.questions.filter((q) => q.status === 'draft').length;
+  $('pill-live').classList.toggle('hidden', !open);
+  $('pill-drafts').classList.toggle('hidden', drafts === 0);
+  $('pill-drafts').textContent = drafts;
 }
 
-// Les deux boutons d'export ne sont cliquables que lorsqu'aucune question
-// n'est encore ouverte — fermer la dernière question EST le "fin du
-// scrutin", pas besoin d'un état séparé à gérer côté serveur.
-function updateExportGating() {
-  const anyOpen = state.questions.some((q) => q.status === 'open');
-  const hasQuestions = state.questions.length > 0;
-  const canExport = hasQuestions && !anyOpen;
-
-  el.exportPdfBtn.disabled = !canExport;
-  el.exportCsvBtn.disabled = !canExport;
-
-  if (anyOpen) {
-    el.endVotingHint.textContent = 'Ferme toutes les questions ouvertes avant d\'exporter les résultats.';
-  } else if (!hasQuestions) {
-    el.endVotingHint.textContent = 'Aucune question créée pour l\'instant.';
-  } else {
-    el.endVotingHint.textContent = 'Toutes les questions sont fermées — les résultats sont prêts à être exportés.';
-  }
-}
-
-function renderLiveSection() {
+function renderLive() {
   const open = state.questions.find((q) => q.status === 'open');
+  $('live-card').classList.toggle('hidden', !open);
+  $('idle-card').classList.toggle('hidden', !!open);
+
   if (!open) {
-    el.liveSection.classList.add('hidden');
+    const next = state.questions.find((q) => q.status === 'draft');
+    $('next-question-box').classList.toggle('hidden', !next);
+    $('no-draft-text').classList.toggle('hidden', !!next || state.questions.length === 0);
+    $('no-question-text').classList.toggle('hidden', state.questions.length > 0);
+    if (next) {
+      $('next-question-text').textContent = next.text;
+      $('open-next-btn').onclick = () => openQuestion(next.id);
+    }
     return;
   }
-  el.liveSection.classList.remove('hidden');
-  el.liveQuestionText.textContent = open.text;
+
+  $('live-question-text').textContent = open.text;
   const count = state.voteCounts[open.id] || 0;
-  el.liveVoteCount.textContent = count;
-  el.liveVoteCountLabel.textContent = count === 1 ? 'vote reçu' : 'votes reçus';
-  el.closeQuestionBtn.onclick = () => closeQuestion(open.id);
+  $('live-vote-count').textContent = count;
+  $('live-vote-count-label').textContent = count === 1 ? 'vote reçu' : 'votes reçus';
+  $('timer-cancel-btn').classList.toggle('hidden', open.timerEndsAt == null);
+  paintCountdown($('live-countdown'), open);
+  $('close-question-btn').onclick = () => closeQuestion(open.id);
 }
 
-function buildResultsBars(question, results) {
-  const wrap = document.createElement('div');
-  const tally = (results && results.tally) || {};
-  const total = (results && results.total) || 0;
-  const choices = question.type === 'standard' ? STANDARD_LABELS : question.options || [];
+onTick(() => {
+  const open = state.questions.find((q) => q.status === 'open');
+  if (open) paintCountdown($('live-countdown'), open, { doneText: open.timerAutoClose ? 'Clôture…' : 'Temps écoulé' });
+});
 
-  wrap.appendChild(buildResultsDonut(choices, tally, total));
-
-  const totalLine = document.createElement('div');
-  totalLine.className = 'results-total';
-  totalLine.textContent = `${total} voix au total`;
-  wrap.appendChild(totalLine);
-
-  for (const choice of choices) {
-    const count = tally[choice] || 0;
-    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-
-    const row = document.createElement('div');
-    row.className = 'result-row';
-
-    const label = document.createElement('div');
-    label.className = 'result-row-label';
-    label.innerHTML = `<span>${escapeHtml(choice)}</span><span class="count">${count} (${pct}%)</span>`;
-    row.appendChild(label);
-
-    const track = document.createElement('div');
-    track.className = 'result-bar-track';
-    const fill = document.createElement('div');
-    fill.className = 'result-bar-fill';
-    fill.style.width = `${pct}%`;
-    track.appendChild(fill);
-    row.appendChild(track);
-
-    wrap.appendChild(row);
-  }
-  return wrap;
-}
-
-// A small brand-consistent palette, cycled if a custom question somehow has
-// more choices than colors -- reuses hex values already used elsewhere in
-// style.css, so the chart never clashes with the rest of the page.
-const RESULT_COLORS = ['#b92a30', '#0a0a0c', '#c7c7cc', '#5b5f66', '#8f1f24', '#e4e4e7'];
-
-function resultColor(index) {
-  return RESULT_COLORS[index % RESULT_COLORS.length];
-}
-
-// CSS-only donut (conic-gradient) -- no charting library, so this keeps
-// working even if the deployed server has no outbound internet access,
-// same reasoning as the vendored jsPDF script.
-function buildResultsDonut(choices, tally, total) {
-  const row = document.createElement('div');
-  row.className = 'results-donut-row';
-
-  const donut = document.createElement('div');
-  donut.className = 'donut-chart';
-
-  if (total > 0) {
-    let cursor = 0;
-    const stops = [];
-    choices.forEach((choice, i) => {
-      const count = tally[choice] || 0;
-      const pct = (count / total) * 100;
-      if (pct <= 0) return;
-      const color = resultColor(i);
-      stops.push(`${color} ${cursor}% ${cursor + pct}%`);
-      cursor += pct;
-    });
-    donut.style.background = stops.length ? `conic-gradient(${stops.join(', ')})` : '#f0f0f2';
-  } else {
-    donut.style.background = '#f0f0f2';
-  }
-
-  const hole = document.createElement('div');
-  hole.className = 'donut-hole';
-  hole.innerHTML = `<div class="donut-total">${total}</div><div class="donut-total-label">voix</div>`;
-  donut.appendChild(hole);
-  row.appendChild(donut);
-
-  const legend = document.createElement('div');
-  legend.className = 'results-legend';
-  choices.forEach((choice, i) => {
-    const count = tally[choice] || 0;
-    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-    const item = document.createElement('div');
-    item.className = 'legend-item';
-    item.innerHTML = `<span class="legend-dot" style="background:${resultColor(i)};"></span>${escapeHtml(choice)}<span class="count">${count} (${pct}%)</span>`;
-    legend.appendChild(item);
-  });
-  row.appendChild(legend);
-
-  return row;
-}
+const STATUS_LABEL = { draft: 'Brouillon', open: 'En direct', closed: 'Fermé' };
 
 function renderQuestionsList() {
-  el.questionsList.innerHTML = '';
-  el.questionsEmpty.classList.toggle('hidden', state.questions.length > 0);
+  const list = $('questions-list');
+  list.innerHTML = '';
+  if (!state.questions.length) {
+    list.innerHTML = `<p class="muted">Aucune question. <a href="#preparer" data-goto="preparer">Préparer les questions →</a></p>`;
+    list.querySelector('[data-goto]').addEventListener('click', (e) => {
+      e.preventDefault();
+      selectTab('preparer');
+    });
+    return;
+  }
 
-  const STATUS_LABEL = { draft: 'Brouillon', open: 'Ouvert', closed: 'Fermé' };
-
-  for (const q of state.questions) {
+  state.questions.forEach((q, i) => {
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card q-item' + (q.status === 'open' ? ' is-open' : '');
+    card.innerHTML =
+      `<div class="q-num">${String(i + 1).padStart(2, '0')}</div>` +
+      `<div class="q-body"><span class="badge badge-${q.status}">${STATUS_LABEL[q.status] || q.status}</span>` +
+      `<div class="q-title">${escapeHtml(q.text)}</div>` +
+      `<p class="q-meta">${q.type === 'standard' ? 'Oui / Non / Blanc' : escapeHtml((q.options || []).join(' · '))}</p></div>`;
+    const body = card.querySelector('.q-body');
 
-    const badge = document.createElement('span');
-    badge.className = `badge badge-${q.status}`;
-    badge.textContent = STATUS_LABEL[q.status] || q.status;
-
-    const title = document.createElement('h3');
-    title.style.margin = '10px 0 4px';
-    title.textContent = q.text;
-
-    const meta = document.createElement('p');
-    meta.className = 'muted';
-    meta.textContent =
-      q.type === 'standard' ? 'Standard (Oui / Non / Blanc)' : `Personnalisé : ${(q.options || []).join(', ')}`;
-
-    card.appendChild(badge);
-    card.appendChild(title);
-    card.appendChild(meta);
-
-    // Une question fermée affiche son résultat final avec le détail.
     if (q.status === 'closed' && state.finalResults[q.id]) {
-      card.appendChild(buildResultsBars(q, state.finalResults[q.id]));
+      const r = state.finalResults[q.id];
+      body.appendChild(resultsBlock(q, r.tally, r.total, { donut: true }));
     }
 
     const actions = document.createElement('div');
-    actions.className = 'btn-row';
-    actions.style.marginTop = '12px';
-
+    actions.className = 'btn-row q-actions';
     if (q.status === 'draft') {
-      actions.appendChild(makeButton('Ouvrir', 'btn-primary', () => openQuestion(q.id)));
-      actions.appendChild(makeButton('Modifier', 'btn-secondary', () => startEdit(q)));
-      actions.appendChild(makeButton('Supprimer', 'btn-danger', () => deleteQuestion(q)));
-    } else if (q.status === 'closed') {
-      // Utile pour nettoyer des questions de test après un essai — une
-      // question ouverte, elle, ne peut pas être supprimée (voir server.js).
-      actions.appendChild(makeButton('Supprimer', 'btn-danger', () => deleteQuestion(q)));
+      actions.appendChild(makeButton('Ouvrir le vote', 'btn btn-primary btn-sm', () => openQuestion(q.id)));
+      actions.appendChild(makeButton('Modifier', 'btn btn-sm', () => startEdit(q)));
+      actions.appendChild(makeButton('Supprimer', 'btn btn-danger btn-sm', () => deleteQuestion(q)));
+    } else if (q.status === 'open') {
+      actions.appendChild(makeButton('Fermer le vote', 'btn btn-primary btn-sm', () => closeQuestion(q.id)));
+    } else {
+      actions.appendChild(makeButton('Supprimer', 'btn btn-danger btn-sm', () => deleteQuestion(q)));
     }
-
-    if (actions.children.length > 0) card.appendChild(actions);
-    el.questionsList.appendChild(card);
-  }
+    body.appendChild(actions);
+    list.appendChild(card);
+  });
 }
 
 function makeButton(text, className, onClick) {
   const btn = document.createElement('button');
+  btn.type = 'button';
   btn.textContent = text;
   btn.className = className;
   btn.addEventListener('click', onClick);
   return btn;
 }
 
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-// ---------- actions sur une question ----------
+// ---------- question actions ----------
 
 async function openQuestion(id) {
+  const other = state.questions.find((q) => q.status === 'open' && q.id !== id);
+  if (other && !confirm(`« ${other.text} » est encore ouverte. Elle sera fermée (et son résultat révélé). Continuer ?`)) return;
   try {
     await api(`/api/questions/${id}/open`, { method: 'POST', auth: true });
-    // Pas de changement d'état local ici — c'est l'événement socket
-    // 'question:open' (reçu aussi par cet onglet, le serveur diffuse à tout
-    // le monde) qui met réellement l'interface à jour.
+    selectTab('seance');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (err) {
     alert(err.message);
   }
 }
 
 async function closeQuestion(id) {
+  const btn = $('close-question-btn');
+  btn.disabled = true;
   try {
     await api(`/api/questions/${id}/close`, { method: 'POST', auth: true });
   } catch (err) {
     alert(err.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 
-async function deleteQuestion(question) {
-  // A closed question may already have real results attached — make that
-  // explicit in the confirmation instead of using the same generic prompt
-  // as deleting an empty draft.
+async function deleteQuestion(q) {
   const message =
-    question.status === 'closed'
-      ? `Supprimer définitivement « ${question.text} » ? Cette question est fermée — son résultat et tous les votes associés seront perdus, sans possibilité de récupération.`
-      : 'Supprimer cette question ?';
+    q.status === 'closed'
+      ? `Supprimer définitivement « ${q.text} » ? Elle est fermée : son résultat et tous ses votes seront perdus.`
+      : `Supprimer « ${q.text} » ?`;
   if (!confirm(message)) return;
   try {
-    await api(`/api/questions/${question.id}`, { method: 'DELETE', auth: true });
-    delete state.finalResults[question.id];
+    await api(`/api/questions/${q.id}`, { method: 'DELETE', auth: true });
+    delete state.finalResults[q.id];
     await refreshQuestions();
   } catch (err) {
     alert(err.message);
   }
 }
 
-// ---------- import de questions depuis un fichier CSV ----------
-//
-// Chaque ligne du fichier devient une question en brouillon via le même
-// POST /api/questions que le formulaire manuel — aucune route serveur
-// dédiée, donc aucun risque de casser la création de questions existante.
-// Le fichier est entièrement traité côté navigateur (lecture + parsing),
-// seules les questions déjà validées sont envoyées au serveur une par une.
+// ---------- timer ----------
 
-// Parseur CSV minimal mais correct (RFC4180) : gère les champs entre
-// guillemets, les guillemets échappés (""), les virgules/retours à la
-// ligne à l'intérieur d'un champ, et les fins de ligne \r\n ou \n. Un
-// simple split(',') casserait dès qu'une question contient une virgule.
+const autoCloseBox = $('timer-autoclose');
+try { autoCloseBox.checked = localStorage.getItem('agTimerAutoClose') !== '0'; } catch { autoCloseBox.checked = true; }
+autoCloseBox.addEventListener('change', () => {
+  try { localStorage.setItem('agTimerAutoClose', autoCloseBox.checked ? '1' : '0'); } catch { /* ignore */ }
+});
+
+async function startTimer(seconds) {
+  const open = state.questions.find((q) => q.status === 'open');
+  if (!open) return;
+  $('timer-error').classList.add('hidden');
+  try {
+    await api(`/api/questions/${open.id}/timer`, { method: 'POST', body: { seconds, autoClose: autoCloseBox.checked }, auth: true });
+  } catch (err) {
+    $('timer-error').textContent = err.message;
+    $('timer-error').classList.remove('hidden');
+  }
+}
+$('timer-presets').querySelectorAll('[data-seconds]').forEach((b) =>
+  b.addEventListener('click', () => startTimer(parseInt(b.dataset.seconds, 10)))
+);
+$('timer-custom-btn').addEventListener('click', () => {
+  const s = parseInt($('timer-custom').value, 10);
+  if (!Number.isInteger(s) || s < 5 || s > 3600) {
+    $('timer-error').textContent = 'Durée entre 5 et 3600 secondes.';
+    $('timer-error').classList.remove('hidden');
+    return;
+  }
+  startTimer(s);
+});
+$('timer-cancel-btn').addEventListener('click', async () => {
+  const open = state.questions.find((q) => q.status === 'open');
+  if (!open) return;
+  try {
+    await api(`/api/questions/${open.id}/timer`, { method: 'DELETE', auth: true });
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+// ---------- CSV import ----------
+
+// Minimal RFC4180 parser: quoted fields, escaped quotes, commas/newlines
+// inside quotes, \r\n or \n line endings.
 function parseCsvText(text) {
   const rows = [];
   let row = [];
   let field = '';
   let inQuotes = false;
-
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (inQuotes) {
-      if (c === '"' && text[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') {
-        inQuotes = false;
-      } else {
-        field += c;
-      }
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\r') {
-      // ignoré — le \n qui suit termine la ligne
-    } else if (c === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-    } else {
-      field += c;
-    }
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') inQuotes = false;
+      else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\r') { /* the following \n ends the line */ }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else field += c;
   }
-  if (field !== '' || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
   return rows;
 }
 
-function downloadCsvTemplate() {
-  const rows = [
-    ['Question', 'Type', 'Options'],
-    ['Approuver le budget 2026 ?', 'Standard', ''],
-    ['Date de la prochaine sortie', 'Personnalisé', '3 mars 2027;10 mars 2027;17 mars 2027'],
-  ];
-  const csvContent = rows.map((row) => row.map(csvEscape).join(',')).join('\r\n');
-  const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
+function csvEscape(value) {
+  const str = String(value ?? '');
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+function downloadBlob(content, filename, type) {
+  const blob = new Blob(content, { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'modele-questions-ag.csv';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
 }
 
-el.downloadTemplateBtn.addEventListener('click', downloadCsvTemplate);
+$('download-template-btn').addEventListener('click', () => {
+  const rows = [
+    ['Question', 'Type', 'Options'],
+    ['Approuver le budget 2026 ?', 'Standard', ''],
+    ['Date de la prochaine sortie', 'Personnalisé', '3 mars 2027;10 mars 2027;17 mars 2027'],
+  ];
+  // BOM so Excel reads the accents correctly.
+  downloadBlob(['﻿' + rows.map((r) => r.map(csvEscape).join(',')).join('\r\n')], 'modele-questions-ag.csv', 'text/csv;charset=utf-8;');
+});
 
 function showImportStatus(message, isError) {
-  el.importStatus.textContent = message;
-  el.importStatus.classList.remove('hidden');
-  el.importStatus.classList.toggle('error-text', isError);
-  el.importStatus.classList.toggle('muted', !isError);
+  const s = $('import-status');
+  s.textContent = message;
+  s.classList.remove('hidden');
+  s.classList.toggle('error-text', isError);
+  s.classList.toggle('muted', !isError);
 }
 
-async function importQuestionsFromCsv(file) {
-  el.importCsvBtn.disabled = true;
-  el.importCsvBtn.textContent = 'Import en cours…';
-  el.importStatus.classList.add('hidden');
+$('import-csv-btn').addEventListener('click', async () => {
+  const input = $('import-csv-input');
+  const file = input.files[0];
+  if (!file) return showImportStatus("Choisis un fichier CSV avant d'importer.", true);
+  const btn = $('import-csv-btn');
+  btn.disabled = true;
+  btn.textContent = 'Import…';
+  $('import-status').classList.add('hidden');
   try {
     let text = await file.text();
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // BOM éventuel
-
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     const allRows = parseCsvText(text).filter((r) => r.some((cell) => cell.trim() !== ''));
-    if (allRows.length === 0) throw new Error('Le fichier est vide.');
-    const dataRows = allRows.slice(1); // la première ligne (en-têtes) est toujours ignorée
-    if (dataRows.length === 0) throw new Error("Aucune ligne de question trouvée après l'en-tête.");
-
+    if (!allRows.length) throw new Error('Le fichier est vide.');
+    const dataRows = allRows.slice(1);
+    if (!dataRows.length) throw new Error("Aucune ligne de question trouvée après l'en-tête.");
     if (!confirm(`Importer ${dataRows.length} question(s) depuis ce fichier ?`)) return;
 
     let success = 0;
     const errors = [];
-
-    // Envoyées une par une, dans l'ordre du fichier — pas en parallèle —
-    // pour que l'ordre des questions dans l'admin corresponde à l'ordre
-    // des lignes du fichier (order_index est attribué séquentiellement
-    // côté serveur).
+    // Sequential so the order on the board matches the file.
     for (let i = 0; i < dataRows.length; i++) {
-      const lineNum = i + 2; // +1 pour l'en-tête, +1 car les lignes de tableur commencent à 1
+      const line = i + 2;
       const [rawText, rawType, rawOptions] = dataRows[i];
       const questionText = (rawText || '').trim();
-      if (!questionText) {
-        errors.push(`Ligne ${lineNum} : texte de question manquant, ignorée.`);
-        continue;
-      }
-
+      if (!questionText) { errors.push(`Ligne ${line} : texte manquant, ignorée.`); continue; }
       const typeRaw = (rawType || '').trim().toLowerCase();
       const isCustom = typeRaw.startsWith('custom') || typeRaw.startsWith('personnalis');
-      const type = isCustom ? 'custom' : 'standard';
-
       let options;
       if (isCustom) {
         options = (rawOptions || '').split(';').map((o) => o.trim()).filter(Boolean);
-        if (options.length < 2) {
-          errors.push(`Ligne ${lineNum} : type personnalisé nécessite au moins 2 options séparées par « ; », ignorée.`);
-          continue;
-        }
+        if (options.length < 2) { errors.push(`Ligne ${line} : au moins 2 options séparées par « ; » requises, ignorée.`); continue; }
       }
-
       try {
-        await api('/api/questions', { method: 'POST', body: { text: questionText, type, options }, auth: true });
+        await api('/api/questions', { method: 'POST', body: { text: questionText, type: isCustom ? 'custom' : 'standard', options }, auth: true });
         success++;
       } catch (err) {
-        errors.push(`Ligne ${lineNum} : ${err.message}`);
+        errors.push(`Ligne ${line} : ${err.message}`);
       }
     }
-
-    let summary = `${success} question(s) importée(s) avec succès.`;
-    if (errors.length > 0) summary += `\n${errors.length} ligne(s) ignorée(s) :\n` + errors.join('\n');
+    let summary = `${success} question(s) importée(s).`;
+    if (errors.length) summary += `\n${errors.length} ligne(s) ignorée(s) :\n` + errors.join('\n');
     showImportStatus(summary, errors.length > 0);
-
     await refreshQuestions();
   } catch (err) {
     showImportStatus(`Échec de l'import : ${err.message}`, true);
   } finally {
-    el.importCsvBtn.disabled = false;
-    el.importCsvBtn.textContent = 'Importer';
-    el.importCsvInput.value = '';
+    btn.disabled = false;
+    btn.textContent = 'Importer';
+    input.value = '';
   }
-}
-
-el.importCsvBtn.addEventListener('click', () => {
-  const file = el.importCsvInput.files[0];
-  if (!file) return showImportStatus('Choisis un fichier CSV avant d\'importer.', true);
-  importQuestionsFromCsv(file);
 });
 
 // ---------- procurations ----------
+
+const voterLink = (token) => `${location.origin}/?token=${token}`;
+
+function addProxyNameRow(value = '') {
+  const row = document.createElement('div');
+  row.className = 'input-row';
+  row.innerHTML = `<input type="text" placeholder="Nom de la personne représentée" /><button type="button" class="icon-btn" aria-label="Retirer">✕</button>`;
+  const input = row.querySelector('input');
+  input.value = value;
+  input.addEventListener('input', updateCreateVoterLabel);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addProxyNameRow();
+      $('proxy-names').lastElementChild.querySelector('input').focus();
+    }
+  });
+  row.querySelector('button').addEventListener('click', () => {
+    if ($('proxy-names').children.length > 1) row.remove();
+    else input.value = '';
+    updateCreateVoterLabel();
+  });
+  $('proxy-names').appendChild(row);
+  updateCreateVoterLabel();
+}
+function getProxyNames() {
+  return Array.from($('proxy-names').querySelectorAll('input')).map((i) => i.value.trim()).filter(Boolean);
+}
+function updateCreateVoterLabel() {
+  const n = getProxyNames().length;
+  $('create-voter-btn').textContent = n ? `Créer le lien — ${n + 1} voix` : 'Créer le lien';
+}
+function resetProxyForm() {
+  $('voter-name').value = '';
+  $('proxy-names').innerHTML = '';
+  addProxyNameRow();
+}
+$('add-proxy-name-btn').addEventListener('click', () => {
+  addProxyNameRow();
+  $('proxy-names').lastElementChild.querySelector('input').focus();
+});
 
 async function refreshVoters() {
   state.voters = await api('/api/voters', { auth: true });
@@ -684,295 +565,352 @@ async function refreshVoters() {
 }
 
 function renderVoters() {
-  el.votersList.innerHTML = '';
-  if (state.voters.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = 'Aucune procuration enregistrée.';
-    el.votersList.appendChild(p);
+  const list = $('voters-list');
+  list.innerHTML = '';
+  const n = state.voters.length;
+  $('pill-voters').classList.toggle('hidden', n === 0);
+  $('pill-voters').textContent = n;
+  const totalVotes = state.voters.reduce((s, v) => s + v.weight, 0);
+  $('voters-summary').textContent = n ? `${n} lien${n > 1 ? 's' : ''} · ${totalVotes} voix` : '';
+
+  if (!n) {
+    list.innerHTML = '<p class="muted" style="margin: 0;">Aucune procuration pour l\'instant.</p>';
     return;
   }
-
-  for (const voter of state.voters) {
+  for (const v of state.voters) {
     const row = document.createElement('div');
-    row.className = 'voter-row';
-
-    const info = document.createElement('div');
-    info.className = 'voter-info';
-    info.innerHTML = `<div class="name">${escapeHtml(voter.displayName)}</div><div class="weight">Poids : ${voter.weight}</div>`;
-
+    row.className = 'row-item';
+    row.innerHTML =
+      `<div class="info"><b>${escapeHtml(v.displayName)}<span class="votes-pill">${v.weight} voix</span></b>` +
+      `<span>Représente : ${escapeHtml((v.proxyNames || []).join(', ') || '—')}</span></div>`;
     const actions = document.createElement('div');
     actions.className = 'btn-row';
-
-    const link = `${location.origin}/voter.html?token=${voter.token}`;
+    actions.appendChild(makeButton('Copier', 'btn btn-sm', () => copy(voterLink(v.token))));
+    actions.appendChild(makeButton('QR', 'btn btn-sm', () => showLinkDialog(v)));
     actions.appendChild(
-      makeButton('Copier le lien', 'btn-secondary', async () => {
+      makeButton('Révoquer', 'btn btn-danger btn-sm', async () => {
+        if (!confirm(`Révoquer le lien de ${v.displayName} ? Il ne pourra plus voter avec ce lien (les votes déjà exprimés restent comptés).`)) return;
         try {
-          await navigator.clipboard.writeText(link);
-        } catch {
-          prompt('Copie ce lien :', link);
+          await api(`/api/voters/${v.token}`, { method: 'DELETE', auth: true });
+          await refreshVoters();
+        } catch (err) {
+          alert(err.message);
         }
       })
     );
-    actions.appendChild(
-      makeButton('Révoquer', 'btn-danger', async () => {
-        if (!confirm(`Révoquer le lien de ${voter.displayName} ?`)) return;
-        await api(`/api/voters/${voter.token}`, { method: 'DELETE', auth: true });
-        await refreshVoters();
-      })
-    );
-
-    row.appendChild(info);
     row.appendChild(actions);
-    el.votersList.appendChild(row);
+    list.appendChild(row);
   }
 }
 
-el.createVoterBtn.addEventListener('click', async () => {
-  const displayName = el.voterName.value.trim();
-  const weight = parseInt(el.voterWeight.value, 10);
+$('create-voter-btn').addEventListener('click', async () => {
+  const displayName = $('voter-name').value.trim();
+  const proxyNames = getProxyNames();
+  const errEl = $('voter-form-error');
+  errEl.classList.add('hidden');
+  const fail = (m) => { errEl.textContent = m; errEl.classList.remove('hidden'); };
+  if (!displayName) return fail('Indique le nom de la personne présente.');
+  if (!proxyNames.length) return fail('Ajoute au moins une personne représentée.');
 
-  el.voterFormError.classList.add('hidden');
-  if (!displayName) return showVoterFormError('Le nom est requis.');
-  if (!Number.isInteger(weight) || weight < 1) return showVoterFormError('Le poids doit être un nombre entier ≥ 1.');
-
-  el.createVoterBtn.disabled = true;
+  $('create-voter-btn').disabled = true;
   try {
-    await api('/api/voters', { method: 'POST', body: { displayName, weight }, auth: true });
-    el.voterName.value = '';
-    el.voterWeight.value = '';
+    const v = await api('/api/voters', { method: 'POST', body: { displayName, proxyNames }, auth: true });
+    resetProxyForm();
     await refreshVoters();
+    showLinkDialog(v);
   } catch (err) {
-    showVoterFormError(err.message);
+    fail(err.message);
   } finally {
-    el.createVoterBtn.disabled = false;
+    $('create-voter-btn').disabled = false;
   }
 });
 
-function showVoterFormError(message) {
-  el.voterFormError.textContent = message;
-  el.voterFormError.classList.remove('hidden');
+function showLinkDialog(v) {
+  const url = voterLink(v.token);
+  $('link-dialog-name').textContent = v.displayName;
+  $('link-dialog-sub').textContent = `${v.weight} voix : la sienne + ${(v.proxyNames || []).join(', ')}. À transmettre uniquement à cette personne.`;
+  $('link-dialog-url').textContent = url;
+  window.QRCode.toCanvas($('link-dialog-qr'), url, { width: 220, margin: 0 }, () => {});
+  $('link-dialog-copy').onclick = () => copy(url);
+  $('link-dialog').showModal();
+}
+$('link-dialog-close').addEventListener('click', () => $('link-dialog').close());
+
+// ---------- closure: exports, new AG, archives ----------
+
+function defaultArchiveTitle() {
+  return `AG du ${new Date().toLocaleDateString('fr-CH')}`;
 }
 
-// ---------- export PDF ----------
-//
-// Pulls the admin-only /api/export/results snapshot (which never includes
-// a per-choice breakdown for a question that isn't closed yet — enforced
-// server-side, not just hidden here) and lays it out with jsPDF, loaded
-// locally from /js/vendor/ rather than a CDN so this still works even if
-// the server it's deployed on has no outbound internet access.
+function renderClosure() {
+  const anyOpen = state.questions.some((q) => q.status === 'open');
+  const has = state.questions.length > 0;
+  $('export-pdf-btn').disabled = !has || anyOpen;
+  $('export-csv-btn').disabled = !has || anyOpen;
+  $('end-voting-hint').textContent = anyOpen
+    ? "Un vote est encore ouvert — ferme-le avant d'exporter."
+    : !has
+    ? 'Aucune question pour cette AG.'
+    : `${state.questions.filter((q) => q.status === 'closed').length} / ${state.questions.length} questions votées. Les résultats sont prêts à être exportés.`;
 
-const STATUS_LABEL_PDF = { draft: 'Brouillon', open: 'Ouvert (non clôturé)', closed: 'Fermé' };
-
-function formatDateTimeFr(date) {
-  return date.toLocaleString('fr-CH', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  $('new-session-btn').disabled = anyOpen;
+  $('new-session-hint').textContent = anyOpen ? "Ferme d'abord le vote en cours." : has ? 'Pense à exporter le PDF avant.' : '';
+  if (!$('archive-title').value) $('archive-title').placeholder = defaultArchiveTitle();
 }
 
-async function exportResultsPdf() {
-  el.exportPdfBtn.disabled = true;
-  el.exportPdfBtn.textContent = 'Génération…';
-  try {
-    const questions = await api('/api/export/results', { auth: true });
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+const STATUS_EXPORT = { draft: 'Non votée', open: 'Ouverte (non clôturée)', closed: 'Fermée' };
 
-    const marginX = 48;
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    let y = 56;
-
-    function ensureSpace(nextLineHeight) {
-      if (y + nextLineHeight > pageHeight - 48) {
-        doc.addPage();
-        y = 56;
-      }
+function exportPdf(questions, title, filename) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const marginX = 48;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const usable = pageWidth - marginX * 2;
+  let y = 64;
+  const ensure = (h) => {
+    if (y + h > pageHeight - 56) {
+      doc.addPage();
+      y = 56;
     }
+  };
 
+  doc.setFillColor('#da291c');
+  doc.rect(0, 0, pageWidth, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor('#111111');
+  doc.text('Résultats des votes', marginX, y);
+  y += 22;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.setTextColor('#555555');
+  doc.text(`EPFL Rocket Team — ${title}`, marginX, y);
+  y += 14;
+  doc.text(`Généré le ${new Date().toLocaleString('fr-CH', { dateStyle: 'short', timeStyle: 'short' })}`, marginX, y);
+  y += 12;
+  doc.setDrawColor('#dddddd');
+  doc.line(marginX, y, pageWidth - marginX, y);
+  y += 28;
+
+  if (!questions.length) {
+    doc.setTextColor('#000000');
+    doc.text('Aucune question.', marginX, y);
+  }
+
+  questions.forEach((q, index) => {
+    ensure(70);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(18);
-    doc.setTextColor('#b92a30'); // brand red
-    doc.text('Résultats — Assemblée Générale', marginX, y);
-    y += 22;
-
+    doc.setFontSize(13);
+    doc.setTextColor('#000000');
+    const lines = doc.splitTextToSize(`${index + 1}. ${q.text}`, usable);
+    doc.text(lines, marginX, y);
+    y += lines.length * 16;
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setTextColor('#555555');
-    doc.text('EPFL Rocket Team', marginX, y);
-    y += 14;
-    doc.text(`Généré le ${formatDateTimeFr(new Date())}`, marginX, y);
-    y += 10;
-    doc.setDrawColor('#e0e0e0');
-    doc.line(marginX, y, pageWidth - marginX, y);
-    y += 26;
+    doc.setFontSize(9.5);
+    doc.setTextColor('#888888');
+    const typeLabel = q.type === 'standard' ? 'Oui / Non / Blanc' : (q.options || []).join(' / ');
+    doc.text(`${typeLabel} — ${STATUS_EXPORT[q.status] || q.status}`, marginX, y);
+    y += 18;
 
-    if (questions.length === 0) {
-      doc.setTextColor('#000000');
-      doc.setFontSize(12);
-      doc.text('Aucune question créée.', marginX, y);
-    }
-
-    questions.forEach((q, index) => {
-      ensureSpace(60);
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(13);
-      doc.setTextColor('#000000');
-      const questionLines = doc.splitTextToSize(`Q${index + 1}. ${q.text}`, pageWidth - marginX * 2);
-      doc.text(questionLines, marginX, y);
-      y += questionLines.length * 16;
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.setTextColor('#777777');
-      const typeLabel = q.type === 'standard' ? 'Standard (Oui / Non / Blanc)' : `Personnalisé : ${(q.options || []).join(', ')}`;
-      doc.text(`${typeLabel} — ${STATUS_LABEL_PDF[q.status] || q.status}`, marginX, y);
-      y += 18;
-
-      if (q.status === 'closed' && q.tally) {
-        const choices = q.type === 'standard' ? STANDARD_LABELS : q.options || [];
-        for (const choice of choices) {
-          ensureSpace(16);
-          const count = q.tally[choice] || 0;
-          const pct = q.total > 0 ? Math.round((count / q.total) * 100) : 0;
-          doc.setTextColor('#000000');
-          doc.setFontSize(11);
-          doc.text(`${choice} : ${count} voix (${pct}%)`, marginX + 12, y);
-          y += 16;
-        }
-        ensureSpace(16);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor('#333333');
-        doc.text(`Total : ${q.total} voix`, marginX + 12, y);
-        doc.setFont('helvetica', 'normal');
-        y += 24;
-      } else {
-        ensureSpace(16);
-        doc.setTextColor('#a05a00');
+    if (q.status === 'closed' && q.tally) {
+      const choices = choicesOf(q);
+      const max = Math.max(0, ...choices.map((c) => q.tally[c] || 0));
+      const leaders = choices.filter((c) => (q.tally[c] || 0) === max);
+      for (const c of choices) {
+        ensure(18);
+        const count = q.tally[c] || 0;
+        const pct = q.total > 0 ? Math.round((count / q.total) * 100) : 0;
+        const isWinner = max > 0 && leaders.length === 1 && leaders[0] === c;
         doc.setFontSize(11);
-        doc.text('Vote non clôturé — résultat non disponible.', marginX + 12, y);
-        y += 24;
-      }
-
-      y += 8;
-    });
-
-    const filename = `resultats-ag-${new Date().toISOString().slice(0, 10)}.pdf`;
-    doc.save(filename);
-  } catch (err) {
-    alert(`Échec de l'export PDF : ${err.message}`);
-  } finally {
-    el.exportPdfBtn.disabled = false;
-    el.exportPdfBtn.textContent = 'Exporter en PDF';
-  }
-}
-
-el.exportPdfBtn.addEventListener('click', exportResultsPdf);
-
-const STATUS_LABEL_CSV = { draft: 'Brouillon', open: 'Ouvert (non clôturé)', closed: 'Fermé' };
-
-// One row per (question, choice) — "long" format, easiest to open straight
-// into Excel/Google Sheets or to pivot. A question that isn't closed yet
-// (shouldn't happen once the button is enabled, but just in case) gets one
-// row with the result fields left blank, same spirit as the PDF.
-function csvEscape(value) {
-  const str = String(value ?? '');
-  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
-  return str;
-}
-
-async function exportResultsCsv() {
-  el.exportCsvBtn.disabled = true;
-  el.exportCsvBtn.textContent = 'Génération…';
-  try {
-    const questions = await api('/api/export/results', { auth: true });
-    const header = ['Question', 'Type', 'Statut', 'Choix', 'Voix', 'Pourcentage', 'Total voix'];
-    const rows = [header];
-
-    questions.forEach((q, index) => {
-      const typeLabel = q.type === 'standard' ? 'Standard (Oui / Non / Blanc)' : `Personnalisé (${(q.options || []).join(', ')})`;
-      const statusLabel = STATUS_LABEL_CSV[q.status] || q.status;
-      const questionLabel = `Q${index + 1}. ${q.text}`;
-
-      if (q.status === 'closed' && q.tally) {
-        const choices = q.type === 'standard' ? STANDARD_LABELS : q.options || [];
-        for (const choice of choices) {
-          const count = q.tally[choice] || 0;
-          const pct = q.total > 0 ? Math.round((count / q.total) * 100) : 0;
-          rows.push([questionLabel, typeLabel, statusLabel, choice, count, `${pct}%`, q.total]);
+        doc.setFont('helvetica', isWinner ? 'bold' : 'normal');
+        doc.setTextColor('#000000');
+        doc.text(c, marginX + 12, y);
+        doc.text(`${count} voix (${pct}%)`, marginX + 230, y, { align: 'right' });
+        doc.setFillColor('#eeeeee');
+        doc.rect(marginX + 245, y - 8, 200, 8, 'F');
+        if (pct > 0) {
+          doc.setFillColor(isWinner ? '#da291c' : '#888888');
+          doc.rect(marginX + 245, y - 8, 2 * pct, 8, 'F');
         }
-      } else {
-        rows.push([questionLabel, typeLabel, statusLabel, '', '', '', '']);
+        y += 17;
       }
-    });
+      ensure(18);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10.5);
+      doc.setTextColor('#333333');
+      doc.text(`Total : ${q.total} voix`, marginX + 12, y);
+      doc.setFont('helvetica', 'normal');
+      y += 26;
+    } else {
+      ensure(18);
+      doc.setFontSize(11);
+      doc.setTextColor('#a05a00');
+      doc.text('Pas de résultat (vote non clôturé).', marginX + 12, y);
+      y += 26;
+    }
+  });
 
-    const csvContent = rows.map((row) => row.map(csvEscape).join(',')).join('\r\n');
-    // BOM upfront so Excel (which guesses encoding from the first bytes,
-    // not from any header) opens accented French characters correctly
-    // instead of mangling "é"/"è"/etc.
-    const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `resultats-ag-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  doc.save(filename);
+}
+
+function exportCsv(questions, filename) {
+  const rows = [['Question', 'Type', 'Statut', 'Choix', 'Voix', 'Pourcentage', 'Total voix']];
+  questions.forEach((q, i) => {
+    const typeLabel = q.type === 'standard' ? 'Standard (Oui / Non / Blanc)' : `Personnalisé (${(q.options || []).join(', ')})`;
+    const label = `Q${i + 1}. ${q.text}`;
+    const status = STATUS_EXPORT[q.status] || q.status;
+    if (q.status === 'closed' && q.tally) {
+      for (const c of choicesOf(q)) {
+        const count = q.tally[c] || 0;
+        const pct = q.total > 0 ? Math.round((count / q.total) * 100) : 0;
+        rows.push([label, typeLabel, status, c, count, `${pct}%`, q.total]);
+      }
+    } else {
+      rows.push([label, typeLabel, status, '', '', '', '']);
+    }
+  });
+  downloadBlob(['﻿' + rows.map((r) => r.map(csvEscape).join(',')).join('\r\n')], filename, 'text/csv;charset=utf-8;');
+}
+
+const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ag';
+
+async function withBusy(btn, label, fn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+  try {
+    await fn();
   } catch (err) {
-    alert(`Échec de l'export CSV : ${err.message}`);
+    alert(err.message);
   } finally {
-    el.exportCsvBtn.disabled = false;
-    el.exportCsvBtn.textContent = 'Exporter en CSV';
+    btn.disabled = false;
+    btn.textContent = old;
   }
 }
 
-el.exportCsvBtn.addEventListener('click', exportResultsCsv);
+$('export-pdf-btn').addEventListener('click', (e) =>
+  withBusy(e.currentTarget, 'Génération…', async () => {
+    const questions = await api('/api/export/results', { auth: true });
+    const title = $('archive-title').value.trim() || defaultArchiveTitle();
+    exportPdf(questions, title, `resultats-${slug(title)}.pdf`);
+  })
+);
+$('export-csv-btn').addEventListener('click', (e) =>
+  withBusy(e.currentTarget, 'Génération…', async () => {
+    const questions = await api('/api/export/results', { auth: true });
+    const title = $('archive-title').value.trim() || defaultArchiveTitle();
+    exportCsv(questions, `resultats-${slug(title)}.csv`);
+  })
+);
 
-// ---------- mises à jour en direct ----------
-
-function connectSocket() {
-  const socket = io();
-
-  socket.on('connect', () => {
-    el.connectionStatus.textContent = 'En direct';
+$('new-session-btn').addEventListener('click', async () => {
+  const title = $('archive-title').value.trim() || defaultArchiveTitle();
+  const deleteVoters = $('delete-voters').checked;
+  const n = state.questions.length;
+  const msg =
+    (n ? `Les ${n} questions et leurs résultats seront archivés sous « ${title} », puis retirés du tableau. Tous les votes seront effacés.` : 'Le tableau est déjà vide.') +
+    (deleteVoters ? `\n\nLes ${state.voters.length} liens de procuration seront SUPPRIMÉS.` : '\n\nLes liens de procuration sont conservés.') +
+    '\n\nAs-tu exporté le PDF ? Continuer ?';
+  if (!confirm(msg)) return;
+  await withBusy($('new-session-btn'), 'Archivage…', async () => {
+    const res = await api('/api/session/new', { method: 'POST', body: { title, deleteVoters }, auth: true });
+    state.finalResults = {};
+    state.voteCounts = {};
+    $('archive-title').value = '';
+    $('delete-voters').checked = false;
+    await Promise.all([refreshQuestions(), refreshVoters(), refreshArchives()]);
+    toast(res.archiveId ? `Archivée : ${res.archivedQuestions} questions. Nouvelle AG prête.` : 'Nouvelle AG prête.');
   });
-  socket.on('disconnect', () => {
-    el.connectionStatus.textContent = 'Reconnexion…';
-  });
+});
 
-  // Une question a été créée/modifiée/supprimée (par nous ou un autre
-  // onglet admin) — le plus simple et sûr est de tout recharger.
-  socket.on('questions:changed', refreshQuestions);
-
-  socket.on('question:open', (question) => {
-    upsertQuestionLocal(question);
-    state.voteCounts[question.id] = 0;
-    renderAll();
-  });
-
-  // Pendant que le vote est ouvert, seul ce total est diffusé —
-  // jamais le détail par choix (résultats cachés jusqu'à la fermeture).
-  socket.on('vote-count:update', ({ questionId, voteCount }) => {
-    state.voteCounts[questionId] = voteCount;
-    renderAll();
-  });
-
-  socket.on('question:closed', ({ questionId, tally, total }) => {
-    state.finalResults[questionId] = { tally, total };
-    const q = state.questions.find((x) => x.id === questionId);
-    if (q) q.status = 'closed';
-    renderAll();
-  });
+async function refreshArchives() {
+  state.archives = await api('/api/archives', { auth: true });
+  const list = $('archives-list');
+  list.innerHTML = '';
+  if (!state.archives.length) {
+    list.innerHTML = '<p class="muted" style="margin: 0;">Aucune archive pour l\'instant. Elles apparaissent ici après « Nouvelle AG ».</p>';
+    return;
+  }
+  for (const a of state.archives) {
+    const row = document.createElement('div');
+    row.className = 'row-item';
+    const date = new Date(a.createdAt).toLocaleString('fr-CH', { dateStyle: 'medium', timeStyle: 'short' });
+    row.innerHTML = `<div class="info"><b>${escapeHtml(a.title)}</b><span>${a.questionCount} questions · archivée le ${escapeHtml(date)}</span></div>`;
+    const actions = document.createElement('div');
+    actions.className = 'btn-row';
+    const load = () => api(`/api/archives/${a.id}`, { auth: true });
+    actions.appendChild(makeButton('PDF', 'btn btn-sm', (e) => withBusy(e.currentTarget, '…', async () => { const d = await load(); exportPdf(d.questions, d.title, `resultats-${slug(d.title)}.pdf`); })));
+    actions.appendChild(makeButton('CSV', 'btn btn-sm', (e) => withBusy(e.currentTarget, '…', async () => { const d = await load(); exportCsv(d.questions, `resultats-${slug(d.title)}.csv`); })));
+    row.appendChild(actions);
+    list.appendChild(row);
+  }
 }
+
+// ---------- live updates ----------
 
 function upsertQuestionLocal(question) {
   const idx = state.questions.findIndex((q) => q.id === question.id);
   if (idx >= 0) state.questions[idx] = { ...state.questions[idx], ...question };
   else state.questions.push(question);
 }
+
+function connectSocket() {
+  if (state.socket) return;
+  const socket = io();
+  state.socket = socket;
+
+  socket.on('connect', () => {
+    setStatus($('connection-status'), true, 'En direct');
+    refreshQuestions().catch(() => {});
+  });
+  socket.on('disconnect', () => setStatus($('connection-status'), false, 'Reconnexion…'));
+
+  socket.on('questions:changed', () => refreshQuestions().catch(() => {}));
+
+  socket.on('question:open', (q) => {
+    // Opening one question closes any other on the server.
+    state.questions.forEach((x) => { if (x.status === 'open' && x.id !== q.id) x.status = 'closed'; });
+    upsertQuestionLocal(withEndsAt(q));
+    state.voteCounts[q.id] = 0;
+    renderAll();
+  });
+
+  // While open, only this total is broadcast — never the breakdown.
+  socket.on('vote-count:update', ({ questionId, voteCount }) => {
+    state.voteCounts[questionId] = voteCount;
+    renderLive();
+  });
+
+  socket.on('timer:update', ({ questionId, remainingMs, autoClose }) => {
+    const q = state.questions.find((x) => x.id === questionId);
+    if (!q) return;
+    q.timerRemainingMs = remainingMs;
+    q.timerAutoClose = autoClose;
+    withEndsAt(q);
+    renderLive();
+  });
+
+  socket.on('question:closed', ({ questionId, tally, total }) => {
+    state.finalResults[questionId] = { tally, total };
+    const q = state.questions.find((x) => x.id === questionId);
+    if (q) {
+      q.status = 'closed';
+      q.timerEndsAt = null;
+    }
+    renderAll();
+  });
+
+  socket.on('session:reset', () => {
+    state.finalResults = {};
+    state.voteCounts = {};
+    Promise.all([refreshQuestions(), refreshVoters(), refreshArchives()]).catch(() => {});
+  });
+}
+
+// ---------- start ----------
+
+resetOptionsList();
+resetProxyForm();
+if (state.pin) enterDashboard();
+else $('pin-screen').classList.remove('hidden');
