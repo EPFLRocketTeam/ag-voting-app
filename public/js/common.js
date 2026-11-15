@@ -28,17 +28,29 @@ window.AG = (() => {
     const s = (DICT[l] && DICT[l][key]) ?? DICT.fr[key] ?? key;
     return fmt(s, vars);
   }
-  // Both languages at once (projector): "Oui · Yes".
+  // Both languages at once (projector): "Oui / Yes" as text, or as HTML
+  // with the English part dimmed (.en) so French stays the main read.
   function tb(key, vars) {
     const a = t(key, vars, 'fr');
     const b = t(key, vars, 'en');
-    return a === b ? a : `${a} · ${b}`;
+    return a === b ? a : `${a} / ${b}`;
+  }
+  function tbHtml(key, vars) {
+    const a = t(key, vars, 'fr');
+    const b = t(key, vars, 'en');
+    return a === b ? escapeHtml(a) : `${escapeHtml(a)}<span class="en"> / ${escapeHtml(b)}</span>`;
   }
   // Standard choices get a translated label; custom options are shown as typed.
   function choiceLabel(c, bilingual = false) {
     const k = `choice.${c}`;
     if (!DICT.fr[k]) return c;
     return bilingual ? tb(k) : t(k);
+  }
+  // Same, as safe HTML (bilingual: English part dimmed).
+  function choiceHtml(c, bilingual = false) {
+    const k = `choice.${c}`;
+    if (!DICT.fr[k]) return escapeHtml(c);
+    return bilingual ? tbHtml(k) : escapeHtml(t(k));
   }
   function applyI18n(root = document) {
     root.querySelectorAll('[data-i18n]').forEach((e) => (e.textContent = t(e.dataset.i18n)));
@@ -128,6 +140,7 @@ window.AG = (() => {
   // `bilingual`: labels in both languages (projector).
   function resultsBlock(question, tally, total, { donut = true, animate = false, bilingual = false } = {}) {
     const L = (key, vars) => (bilingual ? tb(key, vars) : t(key, vars));
+    const LH = (key, vars) => (bilingual ? tbHtml(key, vars) : escapeHtml(t(key, vars)));
     tally = tally || {};
     total = total || 0;
     const choices = choicesOf(question);
@@ -155,7 +168,7 @@ window.AG = (() => {
         offset += len;
       });
       svg += '</svg>';
-      d.innerHTML = `${svg}<div class="donut-center"><b>${total}</b><span>${escapeHtml(L('results.votes'))}</span></div>`;
+      d.innerHTML = `${svg}<div class="donut-center"><b>${total}</b><span>${LH('results.votes')}</span></div>`;
       wrap.appendChild(d);
     }
 
@@ -169,14 +182,14 @@ window.AG = (() => {
       const row = document.createElement('div');
       row.className = 'bar-row' + (c === winner ? ' winner' : '');
       row.innerHTML =
-        `<div class="bar-label"><span class="name" data-badge="${escapeHtml(L('results.majority'))}"><i style="background:${color(i)}"></i>${escapeHtml(choiceLabel(c, bilingual))}</span>` +
-        `<span class="val">${count} · ${pct}%</span></div>` +
+        `<div class="bar-label"><span class="name" data-badge="${escapeHtml(L('results.majority'))}"><i style="background:${color(i)}"></i>${choiceHtml(c, bilingual)}</span>` +
+        `<span class="val">${pct}%<span class="cnt"> (${count})</span></span></div>` +
         `<div class="bar-track"><div class="bar-fill" style="background:${color(i)};width:${animate ? 0 : pct}%"></div></div>`;
       bars.appendChild(row);
     });
     const tot = document.createElement('div');
     tot.className = 'results-total';
-    tot.textContent = L(total === 1 ? 'results.total1' : 'results.total', { n: total });
+    tot.innerHTML = LH(total === 1 ? 'results.total1' : 'results.total', { n: total });
     bars.appendChild(tot);
     wrap.appendChild(bars);
 
@@ -224,5 +237,5 @@ window.AG = (() => {
     elem.textContent = text;
   }
 
-  return { STANDARD_CHOICES, color, choicesOf, t, tb, choiceLabel, getLang, locale, setLang, onLang, applyI18n, mountLangSwitch, trError, api, escapeHtml, withEndsAt, remainingMs, fmtClock, paintCountdown, onTick, resultsBlock, toast, copy, setStatus };
+  return { STANDARD_CHOICES, color, choicesOf, t, tb, tbHtml, choiceLabel, choiceHtml, getLang, locale, setLang, onLang, applyI18n, mountLangSwitch, trError, api, escapeHtml, withEndsAt, remainingMs, fmtClock, paintCountdown, onTick, resultsBlock, toast, copy, setStatus };
 })();

@@ -309,6 +309,9 @@ input[type="file"]::file-selector-button { font: 500 12px var(--font); letter-sp
 .bar-row.winner .name { color: #fff; }
 .bar-row.winner .name::after { content: attr(data-badge); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px; background: var(--red); color: #fff; }
 .results-total { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.bar-label .val .cnt { opacity: .6; }
+/* bilingual labels (projector): English part dimmed */
+.en { opacity: .55; }
 
 /* ---------- procurations / archives rows ---------- */
 

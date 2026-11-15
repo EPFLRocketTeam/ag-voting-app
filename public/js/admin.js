@@ -294,7 +294,7 @@ function renderQuestionsList() {
       `<div class="q-num">${String(i + 1).padStart(2, '0')}</div>` +
       `<div class="q-body"><span class="badge badge-${q.status}">${escapeHtml(t(STATUS_KEY[q.status] || q.status))}</span>` +
       `<div class="q-title">${escapeHtml(q.text)}</div>` +
-      `<p class="q-meta">${q.type === 'standard' ? escapeHtml(t('a.typeStandard')) : escapeHtml((q.options || []).join(' · '))}</p></div>`;
+      `<p class="q-meta">${q.type === 'standard' ? escapeHtml(t('a.typeStandard')) : escapeHtml((q.options || []).join(' / '))}</p></div>`;
     const body = card.querySelector('.q-body');
 
     if (q.status === 'closed' && state.finalResults[q.id]) {

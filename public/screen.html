@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Écran · Screen — Vote AG</title>
+  <title>Écran / Screen — Vote AG</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32x32.png" />
   <link rel="icon" href="/assets/favicon/favicon.ico" />
   <meta name="theme-color" content="#000000" />
@@ -32,7 +32,7 @@
     .s-question { font-size: 6.2vh; font-weight: 600; line-height: 1.12; letter-spacing: -0.02em; margin: 0; max-width: 72vw; text-wrap: balance; }
     .s-question.long { font-size: 4.8vh; }
     .s-choices { display: flex; flex-wrap: wrap; gap: 1.4vh; margin-top: 4vh; }
-    .s-choices span { font-size: 2.6vh; font-weight: 500; padding: 1.2vh 2.6vh; border: 1px solid var(--border-strong); border-radius: 999px; }
+    .s-choices > span { font-size: 2.6vh; font-weight: 500; padding: 1.2vh 2.6vh; border: 1px solid var(--border-strong); border-radius: 999px; }
 
     .s-open-bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 4vw; margin-top: 7vh; }
     .s-count { font-size: 16vh; font-weight: 600; line-height: .9; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; transition: transform .25s var(--ease); }
@@ -87,11 +87,11 @@
   <header class="s-top">
     <div class="brand">
       <img class="brand-logo" src="/assets/ert-rocket.svg" alt="" />
-      <div class="brand-name"><b>Assemblée Générale</b><span>General Assembly · EPFL Rocket Team</span></div>
+      <div class="brand-name"><b>Assemblée Générale</b><span>General Assembly — EPFL Rocket Team</span></div>
     </div>
     <div class="topbar-spacer"></div>
     <div id="corner-join" class="s-join hidden">
-      <div><b id="corner-url"></b>Scanne pour voter · Scan to vote</div>
+      <div><b id="corner-url"></b>Scanne pour voter<span class="en"> / Scan to vote</span></div>
       <div class="qr-box"><canvas id="corner-qr"></canvas></div>
     </div>
   </header>
@@ -100,42 +100,42 @@
     <section id="view-idle" class="s-view s-idle hidden">
       <div class="s-idle-grid">
         <div>
-          <div class="s-eyebrow">Vote électronique · Electronic voting</div>
+          <div class="s-eyebrow">Vote électronique<span class="en"> / Electronic voting</span></div>
           <h1>Rejoins le vote</h1>
           <div class="s-en-title">Join the vote</div>
           <p>Scanne le code avec ton téléphone<br /><span class="en">Scan the code with your phone</span></p>
           <p class="url" id="idle-url"></p>
-          <p class="faint" style="margin-top: 3vh; font-size: 2vh;">La première question apparaîtra ici · The first question will appear here.</p>
+          <p class="faint" style="margin-top: 3vh; font-size: 2vh;">La première question apparaîtra ici.<br />The first question will appear here.</p>
         </div>
         <div class="qr-box"><canvas id="idle-qr"></canvas></div>
       </div>
     </section>
 
     <section id="view-open" class="s-view hidden">
-      <div class="s-eyebrow"><span class="dot"></span>Vote en cours · Voting open</div>
+      <div class="s-eyebrow"><span class="dot"></span>Vote en cours<span class="en"> / Voting open</span></div>
       <h1 id="open-question" class="s-question"></h1>
       <div id="open-choices" class="s-choices"></div>
       <div class="s-open-bottom">
         <div>
           <div id="open-count" class="s-count">0</div>
-          <div class="s-count-label" id="open-count-label">votes reçus · votes received</div>
-          <div class="s-hint">Les résultats s'affichent à la clôture du vote · Results are shown when the vote closes.</div>
+          <div class="s-count-label" id="open-count-label">votes reçus<span class="en"> / votes received</span></div>
+          <div class="s-hint">Les résultats s'affichent à la clôture du vote.<br />Results are shown when the vote closes.</div>
         </div>
         <div id="ring" class="ring hidden">
           <svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="45"></circle><circle class="prog" id="ring-prog" cx="50" cy="50" r="45"></circle></svg>
-          <div class="ring-label"><b id="ring-time">0:00</b><span id="ring-sub">restant · left</span></div>
+          <div class="ring-label"><b id="ring-time">0:00</b><span id="ring-sub">restant<span class="en"> / left</span></span></div>
         </div>
       </div>
     </section>
 
     <section id="view-closed" class="s-view s-closed hidden">
-      <div class="s-eyebrow">Résultat du vote · Result</div>
+      <div class="s-eyebrow">Résultat du vote<span class="en"> / Result</span></div>
       <h1 id="closed-question" class="s-question"></h1>
       <div id="closed-results" class="s-closed-grid"></div>
     </section>
   </main>
 
-  <button id="fs-btn" class="btn btn-sm fs-btn" type="button">Plein écran · Full screen (F)</button>
+  <button id="fs-btn" class="btn btn-sm fs-btn" type="button">Plein écran / Full screen (F)</button>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/vendor/qrcode.min.js"></script>
