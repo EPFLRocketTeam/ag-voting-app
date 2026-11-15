@@ -2,8 +2,8 @@
 // what is public anyway — the open question with its vote COUNT (never the
 // breakdown), then the final result once the question is closed.
 
-const { api, choicesOf, withEndsAt, remainingMs, fmtClock, onTick, resultsBlock, escapeHtml, tb, choiceLabel } = window.AG;
-// The room sees both languages at once: labels are "FR · EN".
+const { api, choicesOf, withEndsAt, remainingMs, fmtClock, onTick, resultsBlock, tbHtml, choiceHtml } = window.AG;
+// The room sees both languages at once: "Français / English", English dimmed.
 
 const $ = (id) => document.getElementById(id);
 const views = { idle: $('view-idle'), open: $('view-open'), closed: $('view-closed') };
@@ -49,7 +49,7 @@ function renderOpen(question, voteCount) {
   const qEl = $('open-question');
   qEl.textContent = question.text;
   qEl.classList.toggle('long', question.text.length > 110);
-  $('open-choices').innerHTML = choicesOf(question).map((c) => `<span>${escapeHtml(choiceLabel(c, true))}</span>`).join('');
+  $('open-choices').innerHTML = choicesOf(question).map((c) => `<span>${choiceHtml(c, true)}</span>`).join('');
   setCount(voteCount || 0, false);
   paintRing();
   show('open');
@@ -58,7 +58,7 @@ function renderOpen(question, voteCount) {
 function setCount(n, bump = true) {
   const c = $('open-count');
   c.textContent = n;
-  $('open-count-label').textContent = tb(n === 1 ? 'a.votesReceived1' : 'a.votesReceived');
+  $('open-count-label').innerHTML = tbHtml(n === 1 ? 'a.votesReceived1' : 'a.votesReceived');
   if (bump) {
     c.classList.add('bump');
     setTimeout(() => c.classList.remove('bump'), 220);
@@ -80,7 +80,7 @@ function paintRing() {
   prog.style.strokeDashoffset = `${RING_CIRC * (1 - frac)}`;
   ring.classList.toggle('urgent', ms > 0 && ms <= 10000);
   $('ring-time').textContent = ms === 0 ? '0:00' : fmtClock(ms);
-  $('ring-sub').textContent = ms === 0 ? tb('a.timeUp') : 'restant · left';
+  $('ring-sub').innerHTML = ms === 0 ? tbHtml('a.timeUp') : 'restant<span class="en"> / left</span>';
 }
 onTick(paintRing);
 
