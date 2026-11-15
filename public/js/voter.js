@@ -8,7 +8,7 @@
 //    worth 1) and every ballot can be cast differently. The page never
 //    claims a weight or a ballot count itself — the server decides.
 
-const { api, escapeHtml, choicesOf, withEndsAt, paintCountdown, onTick, resultsBlock, setStatus } = window.AG;
+const { api, escapeHtml, choicesOf, withEndsAt, paintCountdown, onTick, resultsBlock, setStatus, t, choiceLabel, onLang, mountLangSwitch } = window.AG;
 
 const state = {
   token: new URLSearchParams(location.search).get('token'),
@@ -18,6 +18,9 @@ const state = {
   question: null, // the open question on screen, or null
   choices: {}, // ballot index -> choice saved on the server
   queue: Promise.resolve(),
+  online: null, // socket state, for the header status
+  closedView: null, // { question, tally, total } while the result card is shown
+  lastStatus: null, // [key, kind] of the last vote status message
 };
 
 const $ = (id) => document.getElementById(id);
@@ -46,6 +49,21 @@ const el = {
 
 const isMulti = () => state.ballots.length > 1;
 
+function renderBanner() {
+  if (!state.identity) return;
+  const others = state.ballots.filter((b) => !b.own).map((b) => b.label);
+  el.proxyBannerText.innerHTML = t(others.length > 1 ? 'v.proxyBannerN' : 'v.proxyBanner1', {
+    name: escapeHtml(state.identity.displayName),
+    n: state.ballots.length,
+    others: escapeHtml(others.join(', ')),
+  });
+}
+
+function renderStatus() {
+  if (state.online === null) setStatus(el.status, false, t('status.connecting'));
+  else setStatus(el.status, state.online, t(state.online ? 'status.live' : 'status.reconnecting'));
+}
+
 function showOnly(section) {
   for (const s of [el.invalid, el.waiting, el.voting, el.closed]) s.classList.toggle('hidden', s !== section);
 }
@@ -70,12 +88,8 @@ async function boot() {
       return; // an invalid proxy link must not fall back to anonymous voting
     }
     state.ballots = state.identity.ballots;
-    const others = state.ballots.filter((b) => !b.own).map((b) => b.label);
     el.proxyVotesN.textContent = state.ballots.length;
-    el.proxyBannerText.innerHTML =
-      `<strong>${escapeHtml(state.identity.displayName)}</strong>, tu disposes de ${state.ballots.length} voix : ` +
-      `la tienne et ${others.length > 1 ? 'celles de' : 'celle de'} ${escapeHtml(others.join(', '))}. ` +
-      `<span class="muted">Chaque voix peut être votée différemment.</span>`;
+    renderBanner();
     el.proxyBanner.classList.remove('hidden');
   } else {
     try {
@@ -136,7 +150,8 @@ function showQuestion(question) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip';
-      chip.textContent = c;
+      chip.textContent = choiceLabel(c);
+      chip.dataset.choice = c;
       chip.addEventListener('click', () => cast(state.ballots.map((b) => ({ ballot: b.index, choice: c }))));
       el.sameChips.appendChild(chip);
     }
@@ -146,13 +161,13 @@ function showQuestion(question) {
       card.className = 'ballot';
       card.dataset.ballot = b.index;
       card.innerHTML =
-        `<div class="ballot-head"><div class="ballot-who"><small>${b.own ? 'Ma voix' : 'Procuration'}</small>` +
-        `<b>${escapeHtml(b.label)}</b></div><span class="ballot-state">À voter</span></div><div class="seg"></div>`;
+        `<div class="ballot-head"><div class="ballot-who"><small data-i18n="${b.own ? 'v.ballotMine' : 'v.ballotProxy'}">${t(b.own ? 'v.ballotMine' : 'v.ballotProxy')}</small>` +
+        `<b>${escapeHtml(b.label)}</b></div><span class="ballot-state"></span></div><div class="seg"></div>`;
       const seg = card.querySelector('.seg');
       for (const c of choices) {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.textContent = c;
+        btn.textContent = choiceLabel(c);
         btn.dataset.choice = c;
         btn.addEventListener('click', () => cast([{ ballot: b.index, choice: c }]));
         seg.appendChild(btn);
@@ -167,7 +182,7 @@ function showQuestion(question) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'choice';
-      btn.textContent = c;
+      btn.textContent = choiceLabel(c);
       btn.dataset.choice = c;
       btn.addEventListener('click', () => cast([{ ballot: 0, choice: c }]));
       el.single.appendChild(btn);
@@ -187,7 +202,7 @@ async function loadMyVotes() {
     if (!state.question || state.question.id !== qid) return;
     state.choices = { ...choices };
     paintSelections();
-    if (Object.keys(state.choices).length) setVoteStatus(savedMessage(), 'ok');
+    if (Object.keys(state.choices).length) setVoteStatus('saved', 'ok');
   } catch {
     /* not fatal: the page still works, just without the restored selection */
   }
@@ -198,26 +213,27 @@ function paintSelections(choices = state.choices) {
     for (const card of el.ballotsWrap.querySelectorAll('.ballot')) {
       const chosen = choices[card.dataset.ballot];
       card.classList.toggle('saved', chosen !== undefined);
-      card.querySelector('.ballot-state').textContent = chosen !== undefined ? '✓ Enregistré' : 'À voter';
+      card.querySelector('.ballot-state').textContent = t(chosen !== undefined ? 'v.ballotSaved' : 'v.ballotTodo');
       card.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('selected', b.dataset.choice === chosen));
     }
     const done = state.ballots.filter((b) => choices[b.index] !== undefined).length;
-    el.progress.textContent = `${done} / ${state.ballots.length} voix exprimées`;
+    el.progress.textContent = t('v.progress', { done, n: state.ballots.length });
   } else {
     el.single.querySelectorAll('.choice').forEach((b) => b.classList.toggle('selected', b.dataset.choice === choices[0]));
   }
 }
 
 function savedMessage() {
-  if (!isMulti()) return "Vote enregistré. Tu peux changer d'avis tant que le vote est ouvert.";
+  if (!isMulti()) return t('v.savedSingle');
+  const n = state.ballots.length;
   const done = state.ballots.filter((b) => state.choices[b.index] !== undefined).length;
-  return done === state.ballots.length
-    ? "Toutes tes voix sont enregistrées. Tu peux encore les modifier tant que le vote est ouvert."
-    : `${done} voix sur ${state.ballots.length} enregistrée${done > 1 ? 's' : ''} — il en reste ${state.ballots.length - done}.`;
+  return done === n ? t('v.savedAll') : t('v.savedPartial', { done, n, left: n - done });
 }
 
-function setVoteStatus(text, kind) {
-  el.voteStatus.textContent = text;
+// `what`: '' (clear), 'saving', 'saved', or an error message (already translated).
+function setVoteStatus(what, kind) {
+  state.lastStatus = [what, kind];
+  el.voteStatus.textContent = what === 'saving' ? t('v.saving') : what === 'saved' ? savedMessage() : what;
   el.voteStatus.className = 'vote-status' + (kind ? ` ${kind}` : '');
 }
 
@@ -231,7 +247,7 @@ function cast(votes) {
   const optimistic = { ...state.choices };
   for (const v of votes) optimistic[v.ballot] = v.choice;
   paintSelections(optimistic);
-  setVoteStatus('Enregistrement…');
+  setVoteStatus('saving');
 
   state.queue = state.queue.then(async () => {
     try {
@@ -239,7 +255,7 @@ function cast(votes) {
       if (!state.question || state.question.id !== qid) return;
       for (const v of votes) state.choices[v.ballot] = v.choice;
       paintSelections();
-      setVoteStatus(savedMessage(), 'ok');
+      setVoteStatus('saved', 'ok');
       if (navigator.vibrate) navigator.vibrate(15);
     } catch (err) {
       if (!state.question || state.question.id !== qid) return;
@@ -251,22 +267,24 @@ function cast(votes) {
 
 // ---------- closed: show the public result ----------
 
-function showClosed(question, tally, total) {
+function showClosed(question, tally, total, animate = true) {
+  state.closedView = { question, tally, total };
   el.closedText.textContent = question.text;
   el.closedResults.innerHTML = '';
-  el.closedResults.appendChild(resultsBlock(question, tally, total, { donut: false, animate: true }));
+  el.closedResults.appendChild(resultsBlock(question, tally, total, { donut: false, animate }));
 
   const mine = state.ballots.map((b) => state.choices[b.index]).filter((c) => c !== undefined);
   if (!mine.length) {
-    el.closedMyVote.textContent = "Tu n'as pas voté sur cette question.";
+    el.closedMyVote.textContent = t('v.closedNone');
   } else if (!isMulti()) {
-    el.closedMyVote.textContent = `Ton vote : ${mine[0]}`;
+    el.closedMyVote.textContent = t('v.closedMine', { c: choiceLabel(mine[0]) });
   } else {
     const counts = {};
     mine.forEach((c) => (counts[c] = (counts[c] || 0) + 1));
+    const missing = state.ballots.length - mine.length;
     el.closedMyVote.textContent =
-      'Tes voix : ' + Object.entries(counts).map(([c, n]) => `${c} ×${n}`).join(', ') +
-      (mine.length < state.ballots.length ? ` (${state.ballots.length - mine.length} non exprimée${state.ballots.length - mine.length > 1 ? 's' : ''})` : '');
+      t('v.closedMineMulti', { list: Object.entries(counts).map(([c, n]) => `${choiceLabel(c)} ×${n}`).join(', ') }) +
+      (missing ? t('v.closedNotCast', { n: missing }) : '');
   }
   showOnly(el.closed);
 }
@@ -276,12 +294,19 @@ function showClosed(question, tally, total) {
 function connectSocket() {
   const socket = io();
   socket.on('connect', () => {
-    setStatus(el.status, true, 'En direct');
+    state.online = true;
+    renderStatus();
     syncCurrentQuestion();
   });
-  socket.on('disconnect', () => setStatus(el.status, false, 'Reconnexion…'));
+  socket.on('disconnect', () => {
+    state.online = false;
+    renderStatus();
+  });
 
-  socket.on('question:open', (q) => showQuestion(q));
+  socket.on('question:open', (q) => {
+    state.closedView = null;
+    showQuestion(q);
+  });
 
   socket.on('timer:update', ({ questionId, remainingMs }) => {
     if (!state.question || state.question.id !== questionId) return;
@@ -299,12 +324,13 @@ function connectSocket() {
 
   socket.on('session:reset', () => {
     state.question = null;
+    state.closedView = null;
     showOnly(el.waiting);
   });
 }
 
 onTick(() => {
-  if (state.question) paintCountdown(el.countdown, state.question, { doneText: 'Temps écoulé — clôture imminente' });
+  if (state.question) paintCountdown(el.countdown, state.question, { doneText: t('v.timeUp') });
 });
 
 // ---------- push notifications (opt-in) ----------
@@ -328,10 +354,11 @@ async function setupPush() {
       try {
         const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
         await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
-        el.pushBtn.textContent = 'Notifications activées';
+        el.pushBtn.textContent = t('v.pushEnabled');
+        el.pushBtn.removeAttribute('data-i18n');
       } catch (err) {
         el.pushBtn.disabled = false;
-        alert("Impossible d'activer les notifications : " + err.message);
+        alert(t('v.pushError') + err.message);
       }
     });
   } catch (err) {
@@ -339,4 +366,26 @@ async function setupPush() {
   }
 }
 
+// ---------- language switch ----------
+
+// Re-labels everything in place: the open question (keeping selections),
+// the result card and the banner — nothing is re-fetched.
+onLang(() => {
+  document.title = t('v.pageTitle');
+  renderStatus();
+  renderBanner();
+  if (state.question && !el.voting.classList.contains('hidden')) {
+    el.voting.querySelectorAll('[data-choice]').forEach((b) => (b.textContent = choiceLabel(b.dataset.choice)));
+    paintSelections();
+    if (state.lastStatus) setVoteStatus(...state.lastStatus);
+  }
+  if (state.closedView && !el.closed.classList.contains('hidden')) {
+    const { question, tally, total } = state.closedView;
+    showClosed(question, tally, total, false);
+  }
+});
+
+mountLangSwitch(document.getElementById('lang-switch'));
+document.title = t('v.pageTitle');
+renderStatus();
 boot();

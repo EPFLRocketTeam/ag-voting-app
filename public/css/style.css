@@ -169,6 +169,13 @@ input[type="file"]::file-selector-button { font: 500 12px var(--font); letter-sp
 .icon-btn { flex: none; width: 46px; height: 46px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: transparent; color: var(--text-muted); font-size: 16px; cursor: pointer; }
 .icon-btn:hover { color: var(--text); border-color: var(--text-muted); }
 
+/* ---------- language switch ---------- */
+
+.lang-switch { display: inline-flex; padding: 3px; border: 1px solid var(--border-strong); border-radius: 999px; flex: none; }
+.lang-switch button { font: 600 12px/1 var(--font); letter-spacing: .08em; padding: 7px 10px; min-width: 36px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.lang-switch button:hover { color: var(--text); }
+.lang-switch button[aria-pressed="true"] { background: var(--text); color: #000; }
+
 /* ---------- tabs ---------- */
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 24px; overflow-x: auto; scrollbar-width: none; }
@@ -300,7 +307,7 @@ input[type="file"]::file-selector-button { font: 500 12px var(--font); letter-sp
 .bar-track { height: 10px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .bar-fill { height: 100%; width: 0; border-radius: 999px; transition: width 1.1s var(--ease); }
 .bar-row.winner .name { color: #fff; }
-.bar-row.winner .name::after { content: "Majorité"; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px; background: var(--red); color: #fff; }
+.bar-row.winner .name::after { content: attr(data-badge); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px; background: var(--red); color: #fff; }
 .results-total { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
 
 /* ---------- procurations / archives rows ---------- */

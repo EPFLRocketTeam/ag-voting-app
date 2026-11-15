@@ -24,9 +24,10 @@
       </div>
       <div class="topbar-spacer"></div>
       <span id="connection-status" class="status">Connexion…</span>
+      <div id="lang-switch"></div>
     </header>
 
-    <button id="enable-push-btn" class="btn btn-sm btn-block hidden" type="button" style="margin-bottom: 16px;">Activer les notifications</button>
+    <button id="enable-push-btn" class="btn btn-sm btn-block hidden" type="button" style="margin-bottom: 16px;" data-i18n="v.pushEnable">Activer les notifications</button>
 
     <!-- Procuration : qui vote, pour combien de personnes -->
     <div id="proxy-banner" class="proxy-banner hidden">
@@ -36,22 +37,22 @@
 
     <!-- Lien de procuration invalide -->
     <div id="invalid-token-state" class="card hidden">
-      <span class="eyebrow">Lien invalide</span>
-      <h2>Ce lien de vote n'est pas valide</h2>
-      <p class="muted" style="margin: 0;">Il a peut-être été révoqué. Contacte le comité si tu penses que c'est une erreur.</p>
+      <span class="eyebrow" data-i18n="v.invalidEyebrow">Lien invalide</span>
+      <h2 data-i18n="v.invalidTitle">Ce lien de vote n'est pas valide</h2>
+      <p class="muted" style="margin: 0;" data-i18n="v.invalidText">Il a peut-être été révoqué. Contacte le comité si tu penses que c'est une erreur.</p>
     </div>
 
     <!-- En attente -->
     <div id="waiting-state" class="state-screen hidden">
       <img class="rocket-wait" src="/assets/ert-rocket.svg" alt="" />
-      <h2>En attente de la prochaine question</h2>
-      <p class="muted">Elle apparaîtra ici automatiquement dès son ouverture.<br />Garde cette page ouverte.</p>
+      <h2 data-i18n="v.waitingTitle">En attente de la prochaine question</h2>
+      <p class="muted" data-i18n-html="v.waitingText">Elle apparaîtra ici automatiquement dès son ouverture.<br />Garde cette page ouverte.</p>
     </div>
 
     <!-- Question ouverte -->
     <div id="voting-state" class="card accent hidden">
       <div class="card-head">
-        <span class="badge badge-open">Vote ouvert</span>
+        <span class="badge badge-open" data-i18n="v.voteOpen">Vote ouvert</span>
         <span id="countdown" class="countdown hidden"></span>
       </div>
       <h1 id="question-text" class="question-text"></h1>
@@ -62,7 +63,7 @@
       <!-- plusieurs bulletins (procurations) -->
       <div id="multi-ballot" class="hidden">
         <div class="same-for-all">
-          <span class="label">Même choix pour toutes mes voix</span>
+          <span class="label" data-i18n="v.sameForAll">Même choix pour toutes mes voix</span>
           <div id="same-for-all-chips" class="chip-row"></div>
         </div>
         <div id="ballots" class="ballots"></div>
@@ -74,15 +75,16 @@
 
     <!-- Question tout juste fermée : résultat -->
     <div id="closed-state" class="card hidden">
-      <span class="eyebrow">Vote terminé</span>
+      <span class="eyebrow" data-i18n="v.closedEyebrow">Vote terminé</span>
       <h2 id="closed-question-text"></h2>
       <div id="closed-results"></div>
       <p id="closed-my-vote" class="muted small" style="margin: 18px 0 0;"></p>
-      <p class="faint small" style="margin: 8px 0 0;">En attente de la prochaine question…</p>
+      <p class="faint small" style="margin: 8px 0 0;" data-i18n="v.closedWait">En attente de la prochaine question…</p>
     </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
   <script src="/js/voter.js"></script>
 </body>
