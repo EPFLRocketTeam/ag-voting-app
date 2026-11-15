@@ -15,20 +15,22 @@
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
+  <!-- Texts are filled from i18n.js (data-i18n*); the French below is only the no-JS fallback. -->
 
   <!-- PIN -->
   <div id="pin-screen" class="pin-screen hidden">
     <div class="card">
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 4px;"><div class="js-lang-switch"></div></div>
       <img class="pin-logo" src="/assets/ert-rocket.svg" alt="EPFL Rocket Team" />
       <div style="text-align: center;">
-        <span class="eyebrow">Administration</span>
+        <span class="eyebrow" data-i18n="a.adminEyebrow">Administration</span>
         <h1>Vote AG</h1>
       </div>
       <div class="field" style="margin-top: 18px;">
-        <label for="pin-input">PIN administrateur</label>
-        <input type="password" id="pin-input" placeholder="Code PIN" autocomplete="current-password" inputmode="numeric" />
+        <label for="pin-input" data-i18n="a.pinLabel">PIN administrateur</label>
+        <input type="password" id="pin-input" data-i18n-ph="a.pinPlaceholder" autocomplete="current-password" inputmode="numeric" />
       </div>
-      <button id="pin-submit" class="btn btn-primary btn-block">Déverrouiller</button>
+      <button id="pin-submit" class="btn btn-primary btn-block" data-i18n="a.unlock">Déverrouiller</button>
       <p id="pin-error" class="error-text hidden"></p>
     </div>
   </div>
@@ -38,220 +40,219 @@
     <header class="topbar">
       <div class="brand">
         <img class="brand-logo" src="/assets/ert-rocket.svg" alt="" />
-        <div class="brand-name"><b>Vote AG — Admin</b><span>EPFL Rocket Team</span></div>
+        <div class="brand-name"><b data-i18n="a.brand">Vote AG — Admin</b><span>EPFL Rocket Team</span></div>
       </div>
       <span id="connection-status" class="status" style="margin-left: 8px;">Connexion…</span>
       <div class="topbar-spacer"></div>
       <div class="topbar-links">
-        <a class="btn btn-sm" href="/ecran" target="_blank" rel="noopener">Écran de projection ↗</a>
-        <a class="btn btn-sm" href="/" target="_blank" rel="noopener">Page de vote ↗</a>
-        <button id="logout-btn" class="btn btn-sm" type="button" title="Oublier le PIN sur cet appareil">Déconnexion</button>
+        <div class="js-lang-switch"></div>
+        <a class="btn btn-sm" href="/ecran" target="_blank" rel="noopener" data-i18n="a.linkScreen">Écran de projection ↗</a>
+        <a class="btn btn-sm" href="/" target="_blank" rel="noopener" data-i18n="a.linkVote">Page de vote ↗</a>
+        <button id="logout-btn" class="btn btn-sm" type="button" data-i18n="a.logout" data-i18n-title="a.logoutTitle">Déconnexion</button>
       </div>
     </header>
 
     <nav class="tabs" role="tablist">
-      <button class="tab" role="tab" data-tab="seance">Séance <span id="pill-live" class="pill live hidden">LIVE</span></button>
-      <button class="tab" role="tab" data-tab="preparer">Préparer <span id="pill-drafts" class="pill hidden"></span></button>
-      <button class="tab" role="tab" data-tab="procurations">Procurations <span id="pill-voters" class="pill hidden"></span></button>
-      <button class="tab" role="tab" data-tab="cloture">Clôture &amp; archives</button>
+      <button class="tab" role="tab" data-tab="seance"><span data-i18n="a.tabSeance">Séance</span> <span id="pill-live" class="pill live hidden">LIVE</span></button>
+      <button class="tab" role="tab" data-tab="preparer"><span data-i18n="a.tabPrep">Préparer</span> <span id="pill-drafts" class="pill hidden"></span></button>
+      <button class="tab" role="tab" data-tab="procurations"><span data-i18n="a.tabProxies">Procurations</span> <span id="pill-voters" class="pill hidden"></span></button>
+      <button class="tab" role="tab" data-tab="cloture"><span data-i18n="a.tabEnd">Clôture &amp; archives</span></button>
     </nav>
 
-    <!-- ===================== SÉANCE ===================== -->
+    <!-- ===================== SESSION ===================== -->
     <section id="tab-seance" class="tab-panel">
       <div class="grid-2">
         <div>
-          <!-- vote en cours -->
+          <!-- vote in progress -->
           <div id="live-card" class="card accent hidden">
             <div class="card-head">
-              <span class="badge badge-open">En direct</span>
+              <span class="badge badge-open" data-i18n="a.live">En direct</span>
               <span id="live-countdown" class="countdown hidden"></span>
             </div>
             <h2 id="live-question-text" style="font-size: 24px;"></h2>
             <div class="live-grid">
               <div>
                 <div id="live-vote-count" class="live-count">0</div>
-                <div id="live-vote-count-label" class="live-count-label">votes reçus</div>
+                <div id="live-vote-count-label" class="live-count-label"></div>
               </div>
-              <p class="muted small" style="margin: 0; max-width: 280px;">Le détail par choix reste caché jusqu'à la fermeture — même ici.</p>
+              <p class="muted small" style="margin: 0; max-width: 280px;" data-i18n="a.liveHint"></p>
             </div>
 
             <div class="timer-box">
-              <span class="label">Minuteur</span>
+              <span class="label" data-i18n="a.timer">Minuteur</span>
               <div class="timer-presets" id="timer-presets">
                 <button class="btn btn-sm" data-seconds="30" type="button">30 s</button>
                 <button class="btn btn-sm" data-seconds="60" type="button">1 min</button>
                 <button class="btn btn-sm" data-seconds="90" type="button">1 min 30</button>
                 <button class="btn btn-sm" data-seconds="120" type="button">2 min</button>
                 <button class="btn btn-sm" data-seconds="180" type="button">3 min</button>
-                <input type="number" id="timer-custom" min="5" max="3600" placeholder="sec." aria-label="Durée en secondes" />
-                <button class="btn btn-sm" id="timer-custom-btn" type="button">Lancer</button>
+                <input type="number" id="timer-custom" min="5" max="3600" data-i18n-ph="a.timerSec" aria-label="Durée en secondes / Duration in seconds" />
+                <button class="btn btn-sm" id="timer-custom-btn" type="button" data-i18n="a.timerStart">Lancer</button>
               </div>
               <label class="check" style="margin-top: 14px;">
                 <input type="checkbox" id="timer-autoclose" />
-                <span>Fermer le vote automatiquement à la fin du minuteur</span>
+                <span data-i18n="a.timerAutoClose">Fermer le vote automatiquement à la fin du minuteur</span>
               </label>
-              <button id="timer-cancel-btn" class="btn btn-sm hidden" type="button" style="margin-top: 12px;">Annuler le minuteur</button>
+              <button id="timer-cancel-btn" class="btn btn-sm hidden" type="button" style="margin-top: 12px;" data-i18n="a.timerCancel">Annuler le minuteur</button>
               <p id="timer-error" class="error-text hidden"></p>
             </div>
 
             <div class="btn-row" style="margin-top: 22px;">
-              <button id="close-question-btn" class="btn btn-primary">Fermer le vote et révéler le résultat</button>
+              <button id="close-question-btn" class="btn btn-primary" data-i18n="a.closeReveal">Fermer le vote et révéler le résultat</button>
             </div>
           </div>
 
-          <!-- aucun vote en cours -->
+          <!-- no vote in progress -->
           <div id="idle-card" class="card hidden">
-            <span class="eyebrow">Aucun vote en cours</span>
+            <span class="eyebrow" data-i18n="a.noVote">Aucun vote en cours</span>
             <div id="next-question-box" class="hidden">
-              <p class="muted" style="margin-bottom: 6px;">Prochaine question</p>
+              <p class="muted" style="margin-bottom: 6px;" data-i18n="a.nextQuestion">Prochaine question</p>
               <h2 id="next-question-text"></h2>
-              <button id="open-next-btn" class="btn btn-primary" style="margin-top: 8px;">Ouvrir le vote</button>
+              <button id="open-next-btn" class="btn btn-primary" style="margin-top: 8px;" data-i18n="a.openVote">Ouvrir le vote</button>
             </div>
-            <p id="no-draft-text" class="muted hidden" style="margin: 0;">Toutes les questions ont été votées. Les résultats sont prêts dans l'onglet « Clôture &amp; archives ».</p>
-            <p id="no-question-text" class="muted hidden" style="margin: 0;">Aucune question pour l'instant — prépare-les dans l'onglet « Préparer ».</p>
+            <p id="no-draft-text" class="muted hidden" style="margin: 0;" data-i18n="a.allVoted"></p>
+            <p id="no-question-text" class="muted hidden" style="margin: 0;" data-i18n="a.noQuestion"></p>
           </div>
 
-          <h3 class="section-title">Ordre du jour</h3>
+          <h3 class="section-title" data-i18n="a.agenda">Ordre du jour</h3>
           <div id="questions-list"></div>
         </div>
 
         <aside class="stack">
           <div class="card" style="text-align: center;">
-            <span class="eyebrow">Rejoindre le vote</span>
+            <span class="eyebrow" data-i18n="a.joinEyebrow">Rejoindre le vote</span>
             <div class="qr-box"><canvas id="join-qr"></canvas></div>
             <p class="url-line" id="join-url"></p>
-            <button id="copy-join-link-btn" class="btn btn-sm" type="button">Copier le lien</button>
+            <button id="copy-join-link-btn" class="btn btn-sm" type="button" data-i18n="a.copyLink">Copier le lien</button>
           </div>
           <div class="card">
-            <span class="eyebrow">Projection</span>
-            <p class="muted small">Ouvre l'écran de projection sur l'ordinateur branché au projecteur, puis appuie sur <strong>F</strong> pour le plein écran. Il affiche le QR code, la question, le compteur, le minuteur, puis le résultat à la clôture.</p>
-            <a class="btn btn-sm btn-light" href="/ecran" target="_blank" rel="noopener">Ouvrir l'écran ↗</a>
+            <span class="eyebrow" data-i18n="a.projection">Projection</span>
+            <p class="muted small" data-i18n-html="a.projectionText"></p>
+            <a class="btn btn-sm btn-light" href="/ecran" target="_blank" rel="noopener" data-i18n="a.openScreen">Ouvrir l'écran ↗</a>
           </div>
         </aside>
       </div>
     </section>
 
-    <!-- ===================== PRÉPARER ===================== -->
+    <!-- ===================== PREPARE ===================== -->
     <section id="tab-preparer" class="tab-panel hidden">
       <div class="grid-2">
         <div class="card">
-          <h2 id="form-title">Nouvelle question</h2>
+          <h2 id="form-title"></h2>
           <div class="field">
-            <label for="question-text">Question</label>
-            <input type="text" id="question-text" placeholder="ex. Approuver les comptes 2025-2026 ?" />
+            <label for="question-text" data-i18n="a.fieldQuestion">Question</label>
+            <input type="text" id="question-text" data-i18n-ph="a.questionPlaceholder" />
+            <p class="faint small" style="margin: 8px 0 0;" data-i18n="a.questionHint"></p>
           </div>
           <div class="field">
-            <label for="question-type">Type</label>
+            <label for="question-type" data-i18n="a.fieldType">Type</label>
             <select id="question-type">
-              <option value="standard">Standard (Oui / Non / Blanc)</option>
-              <option value="custom">Personnalisé</option>
+              <option value="standard" data-i18n="a.typeStandardLong">Standard (Oui / Non / Blanc)</option>
+              <option value="custom" data-i18n="a.typeCustom">Personnalisé</option>
             </select>
           </div>
           <div class="field hidden" id="options-field">
-            <label>Options</label>
+            <label data-i18n="a.fieldOptions">Options</label>
             <div id="options-list"></div>
-            <button id="add-option-btn" class="btn btn-sm" type="button" style="margin-top: 10px;">+ Ajouter une option</button>
+            <button id="add-option-btn" class="btn btn-sm" type="button" style="margin-top: 10px;" data-i18n="a.addOption">+ Ajouter une option</button>
           </div>
           <div class="btn-row">
-            <button id="save-question-btn" class="btn btn-primary">Ajouter la question</button>
-            <button id="cancel-edit-btn" class="btn hidden" type="button">Annuler</button>
+            <button id="save-question-btn" class="btn btn-primary"></button>
+            <button id="cancel-edit-btn" class="btn hidden" type="button" data-i18n="a.cancel">Annuler</button>
           </div>
           <p id="form-error" class="error-text hidden"></p>
         </div>
 
         <aside class="card">
-          <h3>Importer depuis un tableur (CSV)</h3>
-          <p class="muted small">
-            Une ligne = une question en brouillon. Colonnes : <strong>Question</strong>, <strong>Type</strong>
-            (vide/« Standard » ou « Personnalisé »), <strong>Options</strong> (séparées par « ; »). La première ligne
-            (en-têtes) est ignorée.
-          </p>
-          <button id="download-template-btn" class="btn btn-sm" type="button">Télécharger le modèle</button>
+          <h3 data-i18n="a.importTitle">Importer depuis un tableur (CSV)</h3>
+          <p class="muted small" data-i18n-html="a.importText"></p>
+          <button id="download-template-btn" class="btn btn-sm" type="button" data-i18n="a.downloadTemplate">Télécharger le modèle</button>
           <div class="field" style="margin-top: 18px;">
-            <label for="import-csv-input">Fichier CSV</label>
+            <label for="import-csv-input" data-i18n="a.csvFile">Fichier CSV</label>
             <input type="file" id="import-csv-input" accept=".csv,text/csv" />
           </div>
-          <button id="import-csv-btn" class="btn btn-primary btn-sm">Importer</button>
+          <button id="import-csv-btn" class="btn btn-primary btn-sm" data-i18n="a.import">Importer</button>
           <p id="import-status" class="muted small hidden" style="white-space: pre-line; margin-top: 12px;"></p>
         </aside>
       </div>
-      <p class="muted small" style="margin-top: 18px;">Les questions créées apparaissent dans l'onglet « Séance », dans l'ordre de création.</p>
+      <p class="muted small" style="margin-top: 18px;" data-i18n="a.questionsTabHint"></p>
     </section>
 
-    <!-- ===================== PROCURATIONS ===================== -->
+    <!-- ===================== PROXIES ===================== -->
     <section id="tab-procurations" class="tab-panel hidden">
       <div class="grid-2">
         <div class="card">
-          <div class="card-head"><h2>Liens de procuration</h2><span id="voters-summary" class="muted small"></span></div>
+          <div class="card-head"><h2 data-i18n="a.proxyLinks">Liens de procuration</h2><span id="voters-summary" class="muted small"></span></div>
           <div id="voters-list"></div>
         </div>
         <aside class="card">
-          <h3>Nouvelle procuration</h3>
-          <p class="muted small">Un lien personnel pour la personne présente, avec un bulletin séparé pour chaque personne qu'elle représente — chaque voix peut être votée différemment. À envoyer en privé.</p>
+          <h3 data-i18n="a.proxyNew">Nouvelle procuration</h3>
+          <p class="muted small" data-i18n="a.proxyNewText"></p>
           <div class="field">
-            <label for="voter-name">Personne présente (titulaire du lien)</label>
-            <input type="text" id="voter-name" placeholder="ex. Jeremy" />
+            <label for="voter-name" data-i18n="a.proxyHolder">Personne présente (titulaire du lien)</label>
+            <input type="text" id="voter-name" data-i18n-ph="a.proxyHolderPlaceholder" />
           </div>
           <div class="field">
-            <label>Personnes représentées</label>
+            <label data-i18n="a.proxyRepresented">Personnes représentées</label>
             <div id="proxy-names"></div>
-            <button id="add-proxy-name-btn" class="btn btn-sm" type="button" style="margin-top: 10px;">+ Ajouter une personne</button>
+            <button id="add-proxy-name-btn" class="btn btn-sm" type="button" style="margin-top: 10px;" data-i18n="a.proxyAddPerson">+ Ajouter une personne</button>
           </div>
-          <button id="create-voter-btn" class="btn btn-primary btn-block">Créer le lien</button>
+          <button id="create-voter-btn" class="btn btn-primary btn-block"></button>
           <p id="voter-form-error" class="error-text hidden"></p>
-          <p class="faint small" style="margin: 14px 0 0;">Le lien public normal (QR code) compte toujours pour 1 voix.</p>
+          <p class="faint small" style="margin: 14px 0 0;" data-i18n="a.proxyPublicNote"></p>
         </aside>
       </div>
     </section>
 
-    <!-- ===================== CLÔTURE ===================== -->
+    <!-- ===================== CLOSING ===================== -->
     <section id="tab-cloture" class="tab-panel hidden">
       <div class="grid-2">
         <div>
           <div class="card">
-            <h2>Résultats de cette AG</h2>
+            <h2 data-i18n="a.resultsTitle">Résultats de cette AG</h2>
             <p id="end-voting-hint" class="muted"></p>
             <div class="btn-row">
-              <button id="export-pdf-btn" class="btn btn-primary" disabled>Exporter en PDF</button>
-              <button id="export-csv-btn" class="btn" disabled>Exporter en CSV</button>
+              <button id="export-pdf-btn" class="btn btn-primary" disabled data-i18n="a.exportPdf">Exporter en PDF</button>
+              <button id="export-csv-btn" class="btn" disabled data-i18n="a.exportCsv">Exporter en CSV</button>
             </div>
           </div>
 
           <div class="card">
-            <h2>Archives</h2>
+            <h2 data-i18n="a.archives">Archives</h2>
             <div id="archives-list"></div>
           </div>
         </div>
 
         <aside class="card">
-          <span class="eyebrow">Nouvelle AG</span>
-          <h3>Archiver et repartir à zéro</h3>
-          <p class="muted small">Enregistre les questions et leurs résultats dans les archives, puis vide le tableau (questions et votes) pour la prochaine AG.</p>
+          <span class="eyebrow" data-i18n="a.newAgEyebrow">Nouvelle AG</span>
+          <h3 data-i18n="a.newAgTitle">Archiver et repartir à zéro</h3>
+          <p class="muted small" data-i18n="a.newAgText"></p>
           <div class="field">
-            <label for="archive-title">Nom de l'archive</label>
+            <label for="archive-title" data-i18n="a.archiveName">Nom de l'archive</label>
             <input type="text" id="archive-title" />
           </div>
           <label class="check" style="margin-bottom: 18px;">
             <input type="checkbox" id="delete-voters" />
-            <span>Supprimer aussi les liens de procuration</span>
+            <span data-i18n="a.deleteVoters">Supprimer aussi les liens de procuration</span>
           </label>
-          <button id="new-session-btn" class="btn btn-danger btn-block">Archiver et démarrer une nouvelle AG</button>
+          <button id="new-session-btn" class="btn btn-danger btn-block" data-i18n="a.newAgBtn">Archiver et démarrer une nouvelle AG</button>
           <p id="new-session-hint" class="faint small" style="margin: 12px 0 0;"></p>
         </aside>
       </div>
     </section>
   </div>
 
-  <!-- QR / lien d'une procuration -->
+  <!-- proxy link / QR -->
   <dialog id="link-dialog">
-    <span class="eyebrow">Lien de procuration</span>
+    <span class="eyebrow" data-i18n="a.dialogEyebrow">Lien de procuration</span>
     <h3 id="link-dialog-name"></h3>
     <p id="link-dialog-sub" class="muted small"></p>
     <div class="qr-box"><canvas id="link-dialog-qr"></canvas></div>
     <p id="link-dialog-url" class="url-line"></p>
     <div class="btn-row" style="justify-content: center;">
-      <button id="link-dialog-copy" class="btn btn-primary btn-sm" type="button">Copier le lien</button>
-      <button id="link-dialog-close" class="btn btn-sm" type="button">Fermer</button>
+      <button id="link-dialog-message" class="btn btn-primary btn-sm" type="button" data-i18n="a.copyMessage">Copier le message</button>
+      <button id="link-dialog-copy" class="btn btn-sm" type="button" data-i18n="a.copy">Copier le lien</button>
+      <button id="link-dialog-close" class="btn btn-sm" type="button" data-i18n="a.close">Fermer</button>
     </div>
   </dialog>
 
@@ -259,6 +260,7 @@
   <!-- Vendored locally (no CDN) so exports work even without outbound internet. -->
   <script src="/js/vendor/jspdf.umd.min.js"></script>
   <script src="/js/vendor/qrcode.min.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
   <script src="/js/admin.js"></script>
 </body>

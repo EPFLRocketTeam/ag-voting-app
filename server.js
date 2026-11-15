@@ -377,7 +377,7 @@ app.post(
     io.emit('question:open', questionRow(rows[0]));
     // Fire-and-forget: a slow/failed push should never delay or fail the
     // admin's "open" action itself.
-    notifyAllSubscribers({ title: 'Nouvelle question ouverte', body: rows[0].text }).catch((err) =>
+    notifyAllSubscribers({ title: 'Nouvelle question · New question', body: rows[0].text }).catch((err) =>
       console.error('notifyAllSubscribers failed:', err.message)
     );
     res.json(questionRow(rows[0]));

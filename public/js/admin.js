@@ -4,7 +4,7 @@
 // No framework, no build step — plain DOM. Everything the page remembers
 // lives in `state` below.
 
-const { api: baseApi, escapeHtml, choicesOf, withEndsAt, paintCountdown, onTick, resultsBlock, toast, copy, setStatus } = window.AG;
+const { api: baseApi, escapeHtml, choicesOf, withEndsAt, paintCountdown, onTick, resultsBlock, toast, copy, setStatus, t, choiceLabel, locale, onLang, mountLangSwitch } = window.AG;
 
 const state = {
   pin: readPin(),
@@ -15,6 +15,7 @@ const state = {
   voters: [],
   archives: [],
   socket: null,
+  online: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -31,7 +32,7 @@ async function api(path, opts = {}) {
   try {
     return await baseApi(path, { ...opts, pin: opts.auth ? state.pin : undefined });
   } catch (err) {
-    if (err.status === 401 && opts.auth) logout('PIN refusé — reconnecte-toi.');
+    if (err.status === 401 && opts.auth) logout(t('a.pinRefused'));
     throw err;
   }
 }
@@ -47,7 +48,7 @@ async function tryPin(pin) {
     savePin(pin);
     enterDashboard();
   } catch {
-    $('pin-error').textContent = 'PIN incorrect — réessaie.';
+    $('pin-error').textContent = t('a.pinWrong');
     $('pin-error').classList.remove('hidden');
   } finally {
     $('pin-submit').disabled = false;
@@ -110,14 +111,14 @@ function renderJoinQr() {
   $('join-url').textContent = url;
   window.QRCode.toCanvas($('join-qr'), url, { width: 200, margin: 0 }, () => {});
 }
-$('copy-join-link-btn').addEventListener('click', () => copy(`${location.origin}/`));
+$('copy-join-link-btn').addEventListener('click', () => copy(`${location.origin}/`, t('a.linkCopied')));
 
 // ---------- question form ----------
 
 function addOptionRow(value = '') {
   const row = document.createElement('div');
   row.className = 'input-row';
-  row.innerHTML = `<input type="text" placeholder="Texte de l'option" /><button type="button" class="icon-btn" aria-label="Retirer">✕</button>`;
+  row.innerHTML = `<input type="text" data-i18n-ph="a.optionPlaceholder" placeholder="${escapeHtml(t('a.optionPlaceholder'))}" /><button type="button" class="icon-btn" aria-label="${escapeHtml(t('a.remove'))}">✕</button>`;
   row.querySelector('input').value = value;
   row.querySelector('button').addEventListener('click', () => {
     if ($('options-list').children.length > 2) row.remove();
@@ -139,10 +140,15 @@ $('question-type').addEventListener('change', () => {
 });
 $('add-option-btn').addEventListener('click', () => addOptionRow());
 
+function renderFormLabels() {
+  const editing = !!state.editingQuestionId;
+  $('form-title').textContent = t(editing ? 'a.formEdit' : 'a.formNew');
+  $('save-question-btn').textContent = t(editing ? 'a.save' : 'a.addQuestion');
+}
+
 function resetForm() {
   state.editingQuestionId = null;
-  $('form-title').textContent = 'Nouvelle question';
-  $('save-question-btn').textContent = 'Ajouter la question';
+  renderFormLabels();
   $('cancel-edit-btn').classList.add('hidden');
   $('question-text').value = '';
   $('question-type').value = 'standard';
@@ -155,8 +161,7 @@ $('cancel-edit-btn').addEventListener('click', resetForm);
 function startEdit(q) {
   selectTab('preparer');
   state.editingQuestionId = q.id;
-  $('form-title').textContent = 'Modifier la question';
-  $('save-question-btn').textContent = 'Enregistrer';
+  renderFormLabels();
   $('cancel-edit-btn').classList.remove('hidden');
   $('question-text').value = q.text;
   $('question-type').value = q.type;
@@ -177,18 +182,18 @@ $('save-question-btn').addEventListener('click', async () => {
   const type = $('question-type').value;
   const options = type === 'custom' ? getOptionValues() : undefined;
   $('form-error').classList.add('hidden');
-  if (!text) return showFormError('Le texte de la question est requis.');
-  if (type === 'custom' && (!options || options.length < 2)) return showFormError('Ajoute au moins 2 options.');
+  if (!text) return showFormError(t('a.errQuestionText'));
+  if (type === 'custom' && (!options || options.length < 2)) return showFormError(t('a.errOptions'));
 
   $('save-question-btn').disabled = true;
   try {
     const body = { text, type, options };
     if (state.editingQuestionId) {
       await api(`/api/questions/${state.editingQuestionId}`, { method: 'PATCH', body, auth: true });
-      toast('Question modifiée');
+      toast(t('a.questionSaved'));
     } else {
       await api('/api/questions', { method: 'POST', body, auth: true });
-      toast('Question ajoutée');
+      toast(t('a.questionAdded'));
     }
     resetForm();
     await refreshQuestions();
@@ -257,7 +262,7 @@ function renderLive() {
   $('live-question-text').textContent = open.text;
   const count = state.voteCounts[open.id] || 0;
   $('live-vote-count').textContent = count;
-  $('live-vote-count-label').textContent = count === 1 ? 'vote reçu' : 'votes reçus';
+  $('live-vote-count-label').textContent = t(count === 1 ? 'a.votesReceived1' : 'a.votesReceived');
   $('timer-cancel-btn').classList.toggle('hidden', open.timerEndsAt == null);
   paintCountdown($('live-countdown'), open);
   $('close-question-btn').onclick = () => closeQuestion(open.id);
@@ -265,16 +270,16 @@ function renderLive() {
 
 onTick(() => {
   const open = state.questions.find((q) => q.status === 'open');
-  if (open) paintCountdown($('live-countdown'), open, { doneText: open.timerAutoClose ? 'Clôture…' : 'Temps écoulé' });
+  if (open) paintCountdown($('live-countdown'), open, { doneText: t(open.timerAutoClose ? 'a.timerClosing' : 'a.timeUp') });
 });
 
-const STATUS_LABEL = { draft: 'Brouillon', open: 'En direct', closed: 'Fermé' };
+const STATUS_KEY = { draft: 'a.statusDraft', open: 'a.statusOpen', closed: 'a.statusClosed' };
 
 function renderQuestionsList() {
   const list = $('questions-list');
   list.innerHTML = '';
   if (!state.questions.length) {
-    list.innerHTML = `<p class="muted">Aucune question. <a href="#preparer" data-goto="preparer">Préparer les questions →</a></p>`;
+    list.innerHTML = `<p class="muted">${escapeHtml(t('a.emptyAgenda'))} <a href="#preparer" data-goto="preparer">${escapeHtml(t('a.goPrepare'))}</a></p>`;
     list.querySelector('[data-goto]').addEventListener('click', (e) => {
       e.preventDefault();
       selectTab('preparer');
@@ -287,9 +292,9 @@ function renderQuestionsList() {
     card.className = 'card q-item' + (q.status === 'open' ? ' is-open' : '');
     card.innerHTML =
       `<div class="q-num">${String(i + 1).padStart(2, '0')}</div>` +
-      `<div class="q-body"><span class="badge badge-${q.status}">${STATUS_LABEL[q.status] || q.status}</span>` +
+      `<div class="q-body"><span class="badge badge-${q.status}">${escapeHtml(t(STATUS_KEY[q.status] || q.status))}</span>` +
       `<div class="q-title">${escapeHtml(q.text)}</div>` +
-      `<p class="q-meta">${q.type === 'standard' ? 'Oui / Non / Blanc' : escapeHtml((q.options || []).join(' · '))}</p></div>`;
+      `<p class="q-meta">${q.type === 'standard' ? escapeHtml(t('a.typeStandard')) : escapeHtml((q.options || []).join(' · '))}</p></div>`;
     const body = card.querySelector('.q-body');
 
     if (q.status === 'closed' && state.finalResults[q.id]) {
@@ -300,13 +305,13 @@ function renderQuestionsList() {
     const actions = document.createElement('div');
     actions.className = 'btn-row q-actions';
     if (q.status === 'draft') {
-      actions.appendChild(makeButton('Ouvrir le vote', 'btn btn-primary btn-sm', () => openQuestion(q.id)));
-      actions.appendChild(makeButton('Modifier', 'btn btn-sm', () => startEdit(q)));
-      actions.appendChild(makeButton('Supprimer', 'btn btn-danger btn-sm', () => deleteQuestion(q)));
+      actions.appendChild(makeButton(t('a.openVote'), 'btn btn-primary btn-sm', () => openQuestion(q.id)));
+      actions.appendChild(makeButton(t('a.edit'), 'btn btn-sm', () => startEdit(q)));
+      actions.appendChild(makeButton(t('a.delete'), 'btn btn-danger btn-sm', () => deleteQuestion(q)));
     } else if (q.status === 'open') {
-      actions.appendChild(makeButton('Fermer le vote', 'btn btn-primary btn-sm', () => closeQuestion(q.id)));
+      actions.appendChild(makeButton(t('a.closeVote'), 'btn btn-primary btn-sm', () => closeQuestion(q.id)));
     } else {
-      actions.appendChild(makeButton('Supprimer', 'btn btn-danger btn-sm', () => deleteQuestion(q)));
+      actions.appendChild(makeButton(t('a.delete'), 'btn btn-danger btn-sm', () => deleteQuestion(q)));
     }
     body.appendChild(actions);
     list.appendChild(card);
@@ -326,7 +331,7 @@ function makeButton(text, className, onClick) {
 
 async function openQuestion(id) {
   const other = state.questions.find((q) => q.status === 'open' && q.id !== id);
-  if (other && !confirm(`« ${other.text} » est encore ouverte. Elle sera fermée (et son résultat révélé). Continuer ?`)) return;
+  if (other && !confirm(t('a.confirmOpenOther', { q: other.text }))) return;
   try {
     await api(`/api/questions/${id}/open`, { method: 'POST', auth: true });
     selectTab('seance');
@@ -349,10 +354,7 @@ async function closeQuestion(id) {
 }
 
 async function deleteQuestion(q) {
-  const message =
-    q.status === 'closed'
-      ? `Supprimer définitivement « ${q.text} » ? Elle est fermée : son résultat et tous ses votes seront perdus.`
-      : `Supprimer « ${q.text} » ?`;
+  const message = t(q.status === 'closed' ? 'a.confirmDeleteClosed' : 'a.confirmDelete', { q: q.text });
   if (!confirm(message)) return;
   try {
     await api(`/api/questions/${q.id}`, { method: 'DELETE', auth: true });
@@ -388,7 +390,7 @@ $('timer-presets').querySelectorAll('[data-seconds]').forEach((b) =>
 $('timer-custom-btn').addEventListener('click', () => {
   const s = parseInt($('timer-custom').value, 10);
   if (!Number.isInteger(s) || s < 5 || s > 3600) {
-    $('timer-error').textContent = 'Durée entre 5 et 3600 secondes.';
+    $('timer-error').textContent = t('a.timerRange');
     $('timer-error').classList.remove('hidden');
     return;
   }
@@ -467,19 +469,19 @@ function showImportStatus(message, isError) {
 $('import-csv-btn').addEventListener('click', async () => {
   const input = $('import-csv-input');
   const file = input.files[0];
-  if (!file) return showImportStatus("Choisis un fichier CSV avant d'importer.", true);
+  if (!file) return showImportStatus(t('a.importChoose'), true);
   const btn = $('import-csv-btn');
   btn.disabled = true;
-  btn.textContent = 'Import…';
+  btn.textContent = t('a.importing');
   $('import-status').classList.add('hidden');
   try {
     let text = await file.text();
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     const allRows = parseCsvText(text).filter((r) => r.some((cell) => cell.trim() !== ''));
-    if (!allRows.length) throw new Error('Le fichier est vide.');
+    if (!allRows.length) throw new Error(t('a.importEmpty'));
     const dataRows = allRows.slice(1);
-    if (!dataRows.length) throw new Error("Aucune ligne de question trouvée après l'en-tête.");
-    if (!confirm(`Importer ${dataRows.length} question(s) depuis ce fichier ?`)) return;
+    if (!dataRows.length) throw new Error(t('a.importNoRows'));
+    if (!confirm(t('a.importConfirm', { n: dataRows.length }))) return;
 
     let success = 0;
     const errors = [];
@@ -488,30 +490,30 @@ $('import-csv-btn').addEventListener('click', async () => {
       const line = i + 2;
       const [rawText, rawType, rawOptions] = dataRows[i];
       const questionText = (rawText || '').trim();
-      if (!questionText) { errors.push(`Ligne ${line} : texte manquant, ignorée.`); continue; }
+      if (!questionText) { errors.push(t('a.importMissing', { l: line })); continue; }
       const typeRaw = (rawType || '').trim().toLowerCase();
-      const isCustom = typeRaw.startsWith('custom') || typeRaw.startsWith('personnalis');
+      const isCustom = typeRaw.startsWith('custom') || typeRaw.startsWith('personnalis') || typeRaw.startsWith('perso');
       let options;
       if (isCustom) {
         options = (rawOptions || '').split(';').map((o) => o.trim()).filter(Boolean);
-        if (options.length < 2) { errors.push(`Ligne ${line} : au moins 2 options séparées par « ; » requises, ignorée.`); continue; }
+        if (options.length < 2) { errors.push(t('a.importOptions', { l: line })); continue; }
       }
       try {
         await api('/api/questions', { method: 'POST', body: { text: questionText, type: isCustom ? 'custom' : 'standard', options }, auth: true });
         success++;
       } catch (err) {
-        errors.push(`Ligne ${line} : ${err.message}`);
+        errors.push(t('a.importLineErr', { l: line, e: err.message }));
       }
     }
-    let summary = `${success} question(s) importée(s).`;
-    if (errors.length) summary += `\n${errors.length} ligne(s) ignorée(s) :\n` + errors.join('\n');
+    let summary = t('a.importDone', { n: success });
+    if (errors.length) summary += `\n${t('a.importSkipped', { n: errors.length })}\n` + errors.join('\n');
     showImportStatus(summary, errors.length > 0);
     await refreshQuestions();
   } catch (err) {
-    showImportStatus(`Échec de l'import : ${err.message}`, true);
+    showImportStatus(t('a.importFailed', { e: err.message }), true);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Importer';
+    btn.textContent = t('a.import');
     input.value = '';
   }
 });
@@ -520,10 +522,25 @@ $('import-csv-btn').addEventListener('click', async () => {
 
 const voterLink = (token) => `${location.origin}/?token=${token}`;
 
+// Ready-to-paste message for the proxy holder — always in both languages,
+// since it goes to people whatever language the admin panel is in.
+function proxyMessage(v) {
+  const names = (v.proxyNames || []).join(', ');
+  return (
+    `Salut ${v.displayName} ! Voici ton lien de vote personnel pour l'AG de l'EPFL Rocket Team. ` +
+    `Il compte pour ${v.weight} voix : la tienne + ${names}. Tu pourras voter différemment pour chaque personne. ` +
+    `Ne le partage avec personne.\n\n` +
+    `Hi ${v.displayName}! Here is your personal voting link for the EPFL Rocket Team AG. ` +
+    `It holds ${v.weight} votes: your own + ${names}. You can vote differently for each person. ` +
+    `Please don't share it.\n\n` +
+    voterLink(v.token)
+  );
+}
+
 function addProxyNameRow(value = '') {
   const row = document.createElement('div');
   row.className = 'input-row';
-  row.innerHTML = `<input type="text" placeholder="Nom de la personne représentée" /><button type="button" class="icon-btn" aria-label="Retirer">✕</button>`;
+  row.innerHTML = `<input type="text" data-i18n-ph="a.proxyRepresentedPlaceholder" placeholder="${escapeHtml(t('a.proxyRepresentedPlaceholder'))}" /><button type="button" class="icon-btn" aria-label="${escapeHtml(t('a.remove'))}">✕</button>`;
   const input = row.querySelector('input');
   input.value = value;
   input.addEventListener('input', updateCreateVoterLabel);
@@ -547,7 +564,7 @@ function getProxyNames() {
 }
 function updateCreateVoterLabel() {
   const n = getProxyNames().length;
-  $('create-voter-btn').textContent = n ? `Créer le lien — ${n + 1} voix` : 'Créer le lien';
+  $('create-voter-btn').textContent = n ? t('a.proxyCreateN', { n: n + 1 }) : t('a.proxyCreate');
 }
 function resetProxyForm() {
   $('voter-name').value = '';
@@ -571,25 +588,26 @@ function renderVoters() {
   $('pill-voters').classList.toggle('hidden', n === 0);
   $('pill-voters').textContent = n;
   const totalVotes = state.voters.reduce((s, v) => s + v.weight, 0);
-  $('voters-summary').textContent = n ? `${n} lien${n > 1 ? 's' : ''} · ${totalVotes} voix` : '';
+  $('voters-summary').textContent = n ? t('a.proxySummary', { n, v: totalVotes }) : '';
 
   if (!n) {
-    list.innerHTML = '<p class="muted" style="margin: 0;">Aucune procuration pour l\'instant.</p>';
+    list.innerHTML = `<p class="muted" style="margin: 0;">${escapeHtml(t('a.proxyNone'))}</p>`;
     return;
   }
   for (const v of state.voters) {
     const row = document.createElement('div');
     row.className = 'row-item';
     row.innerHTML =
-      `<div class="info"><b>${escapeHtml(v.displayName)}<span class="votes-pill">${v.weight} voix</span></b>` +
-      `<span>Représente : ${escapeHtml((v.proxyNames || []).join(', ') || '—')}</span></div>`;
+      `<div class="info"><b>${escapeHtml(v.displayName)}<span class="votes-pill">${escapeHtml(t('a.proxyVotes', { n: v.weight }))}</span></b>` +
+      `<span>${escapeHtml(t('a.proxyRepresents', { names: (v.proxyNames || []).join(', ') || '—' }))}</span></div>`;
     const actions = document.createElement('div');
     actions.className = 'btn-row';
-    actions.appendChild(makeButton('Copier', 'btn btn-sm', () => copy(voterLink(v.token))));
-    actions.appendChild(makeButton('QR', 'btn btn-sm', () => showLinkDialog(v)));
+    actions.appendChild(makeButton(t('a.copyMessage'), 'btn btn-primary btn-sm', () => copy(proxyMessage(v), t('a.messageCopied'))));
+    actions.appendChild(makeButton(t('a.copy'), 'btn btn-sm', () => copy(voterLink(v.token), t('a.linkCopied'))));
+    actions.appendChild(makeButton(t('a.qr'), 'btn btn-sm', () => showLinkDialog(v)));
     actions.appendChild(
-      makeButton('Révoquer', 'btn btn-danger btn-sm', async () => {
-        if (!confirm(`Révoquer le lien de ${v.displayName} ? Il ne pourra plus voter avec ce lien (les votes déjà exprimés restent comptés).`)) return;
+      makeButton(t('a.revoke'), 'btn btn-danger btn-sm', async () => {
+        if (!confirm(t('a.confirmRevoke', { name: v.displayName }))) return;
         try {
           await api(`/api/voters/${v.token}`, { method: 'DELETE', auth: true });
           await refreshVoters();
@@ -609,8 +627,8 @@ $('create-voter-btn').addEventListener('click', async () => {
   const errEl = $('voter-form-error');
   errEl.classList.add('hidden');
   const fail = (m) => { errEl.textContent = m; errEl.classList.remove('hidden'); };
-  if (!displayName) return fail('Indique le nom de la personne présente.');
-  if (!proxyNames.length) return fail('Ajoute au moins une personne représentée.');
+  if (!displayName) return fail(t('a.errHolder'));
+  if (!proxyNames.length) return fail(t('a.errRepresented'));
 
   $('create-voter-btn').disabled = true;
   try {
@@ -628,10 +646,11 @@ $('create-voter-btn').addEventListener('click', async () => {
 function showLinkDialog(v) {
   const url = voterLink(v.token);
   $('link-dialog-name').textContent = v.displayName;
-  $('link-dialog-sub').textContent = `${v.weight} voix : la sienne + ${(v.proxyNames || []).join(', ')}. À transmettre uniquement à cette personne.`;
+  $('link-dialog-sub').textContent = t('a.dialogSub', { n: v.weight, names: (v.proxyNames || []).join(', ') });
   $('link-dialog-url').textContent = url;
   window.QRCode.toCanvas($('link-dialog-qr'), url, { width: 220, margin: 0 }, () => {});
-  $('link-dialog-copy').onclick = () => copy(url);
+  $('link-dialog-copy').onclick = () => copy(url, t('a.linkCopied'));
+  $('link-dialog-message').onclick = () => copy(proxyMessage(v), t('a.messageCopied'));
   $('link-dialog').showModal();
 }
 $('link-dialog-close').addEventListener('click', () => $('link-dialog').close());
@@ -639,7 +658,7 @@ $('link-dialog-close').addEventListener('click', () => $('link-dialog').close())
 // ---------- closure: exports, new AG, archives ----------
 
 function defaultArchiveTitle() {
-  return `AG du ${new Date().toLocaleDateString('fr-CH')}`;
+  return t('a.defaultArchiveTitle', { d: new Date().toLocaleDateString('fr-CH') });
 }
 
 function renderClosure() {
@@ -648,17 +667,17 @@ function renderClosure() {
   $('export-pdf-btn').disabled = !has || anyOpen;
   $('export-csv-btn').disabled = !has || anyOpen;
   $('end-voting-hint').textContent = anyOpen
-    ? "Un vote est encore ouvert — ferme-le avant d'exporter."
+    ? t('a.endOpen')
     : !has
-    ? 'Aucune question pour cette AG.'
-    : `${state.questions.filter((q) => q.status === 'closed').length} / ${state.questions.length} questions votées. Les résultats sont prêts à être exportés.`;
+    ? t('a.endEmpty')
+    : t('a.endReady', { c: state.questions.filter((q) => q.status === 'closed').length, n: state.questions.length });
 
   $('new-session-btn').disabled = anyOpen;
-  $('new-session-hint').textContent = anyOpen ? "Ferme d'abord le vote en cours." : has ? 'Pense à exporter le PDF avant.' : '';
-  if (!$('archive-title').value) $('archive-title').placeholder = defaultArchiveTitle();
+  $('new-session-hint').textContent = anyOpen ? t('a.newAgClosing') : has ? t('a.newAgExportFirst') : '';
+  $('archive-title').placeholder = defaultArchiveTitle();
 }
 
-const STATUS_EXPORT = { draft: 'Non votée', open: 'Ouverte (non clôturée)', closed: 'Fermée' };
+const STATUS_EXPORT = { draft: 'x.statusDraft', open: 'x.statusOpen', closed: 'x.statusClosed' };
 
 function exportPdf(questions, title, filename) {
   const { jsPDF } = window.jspdf;
@@ -680,14 +699,14 @@ function exportPdf(questions, title, filename) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
   doc.setTextColor('#111111');
-  doc.text('Résultats des votes', marginX, y);
+  doc.text(t('x.title'), marginX, y);
   y += 22;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(11);
   doc.setTextColor('#555555');
   doc.text(`EPFL Rocket Team — ${title}`, marginX, y);
   y += 14;
-  doc.text(`Généré le ${new Date().toLocaleString('fr-CH', { dateStyle: 'short', timeStyle: 'short' })}`, marginX, y);
+  doc.text(t('x.generated', { d: new Date().toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' }) }), marginX, y);
   y += 12;
   doc.setDrawColor('#dddddd');
   doc.line(marginX, y, pageWidth - marginX, y);
@@ -695,7 +714,7 @@ function exportPdf(questions, title, filename) {
 
   if (!questions.length) {
     doc.setTextColor('#000000');
-    doc.text('Aucune question.', marginX, y);
+    doc.text(t('x.none'), marginX, y);
   }
 
   questions.forEach((q, index) => {
@@ -709,8 +728,8 @@ function exportPdf(questions, title, filename) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9.5);
     doc.setTextColor('#888888');
-    const typeLabel = q.type === 'standard' ? 'Oui / Non / Blanc' : (q.options || []).join(' / ');
-    doc.text(`${typeLabel} — ${STATUS_EXPORT[q.status] || q.status}`, marginX, y);
+    const typeLabel = q.type === 'standard' ? t('a.typeStandard') : (q.options || []).join(' / ');
+    doc.text(`${typeLabel} — ${t(STATUS_EXPORT[q.status] || q.status)}`, marginX, y);
     y += 18;
 
     if (q.status === 'closed' && q.tally) {
@@ -725,8 +744,8 @@ function exportPdf(questions, title, filename) {
         doc.setFontSize(11);
         doc.setFont('helvetica', isWinner ? 'bold' : 'normal');
         doc.setTextColor('#000000');
-        doc.text(c, marginX + 12, y);
-        doc.text(`${count} voix (${pct}%)`, marginX + 230, y, { align: 'right' });
+        doc.text(choiceLabel(c), marginX + 12, y);
+        doc.text(t('x.votesPct', { c: count, p: pct }), marginX + 230, y, { align: 'right' });
         doc.setFillColor('#eeeeee');
         doc.rect(marginX + 245, y - 8, 200, 8, 'F');
         if (pct > 0) {
@@ -739,14 +758,14 @@ function exportPdf(questions, title, filename) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10.5);
       doc.setTextColor('#333333');
-      doc.text(`Total : ${q.total} voix`, marginX + 12, y);
+      doc.text(t('x.total', { n: q.total }), marginX + 12, y);
       doc.setFont('helvetica', 'normal');
       y += 26;
     } else {
       ensure(18);
       doc.setFontSize(11);
       doc.setTextColor('#a05a00');
-      doc.text('Pas de résultat (vote non clôturé).', marginX + 12, y);
+      doc.text(t('x.noResult'), marginX + 12, y);
       y += 26;
     }
   });
@@ -755,16 +774,16 @@ function exportPdf(questions, title, filename) {
 }
 
 function exportCsv(questions, filename) {
-  const rows = [['Question', 'Type', 'Statut', 'Choix', 'Voix', 'Pourcentage', 'Total voix']];
+  const rows = [t('x.csvHeader').split('|')];
   questions.forEach((q, i) => {
-    const typeLabel = q.type === 'standard' ? 'Standard (Oui / Non / Blanc)' : `Personnalisé (${(q.options || []).join(', ')})`;
+    const typeLabel = q.type === 'standard' ? t('x.typeStandard') : t('x.typeCustom', { o: (q.options || []).join(', ') });
     const label = `Q${i + 1}. ${q.text}`;
-    const status = STATUS_EXPORT[q.status] || q.status;
+    const status = t(STATUS_EXPORT[q.status] || q.status);
     if (q.status === 'closed' && q.tally) {
       for (const c of choicesOf(q)) {
         const count = q.tally[c] || 0;
         const pct = q.total > 0 ? Math.round((count / q.total) * 100) : 0;
-        rows.push([label, typeLabel, status, c, count, `${pct}%`, q.total]);
+        rows.push([label, typeLabel, status, choiceLabel(c), count, `${pct}%`, q.total]);
       }
     } else {
       rows.push([label, typeLabel, status, '', '', '', '']);
@@ -773,6 +792,7 @@ function exportCsv(questions, filename) {
   downloadBlob(['﻿' + rows.map((r) => r.map(csvEscape).join(',')).join('\r\n')], filename, 'text/csv;charset=utf-8;');
 }
 
+const fileName = (title, ext) => `${t('x.filePrefix')}-${slug(title)}.${ext}`;
 const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ag';
 
 async function withBusy(btn, label, fn) {
@@ -790,17 +810,17 @@ async function withBusy(btn, label, fn) {
 }
 
 $('export-pdf-btn').addEventListener('click', (e) =>
-  withBusy(e.currentTarget, 'Génération…', async () => {
+  withBusy(e.currentTarget, t('a.generating'), async () => {
     const questions = await api('/api/export/results', { auth: true });
     const title = $('archive-title').value.trim() || defaultArchiveTitle();
-    exportPdf(questions, title, `resultats-${slug(title)}.pdf`);
+    exportPdf(questions, title, fileName(title, 'pdf'));
   })
 );
 $('export-csv-btn').addEventListener('click', (e) =>
-  withBusy(e.currentTarget, 'Génération…', async () => {
+  withBusy(e.currentTarget, t('a.generating'), async () => {
     const questions = await api('/api/export/results', { auth: true });
     const title = $('archive-title').value.trim() || defaultArchiveTitle();
-    exportCsv(questions, `resultats-${slug(title)}.csv`);
+    exportCsv(questions, fileName(title, 'csv'));
   })
 );
 
@@ -809,39 +829,43 @@ $('new-session-btn').addEventListener('click', async () => {
   const deleteVoters = $('delete-voters').checked;
   const n = state.questions.length;
   const msg =
-    (n ? `Les ${n} questions et leurs résultats seront archivés sous « ${title} », puis retirés du tableau. Tous les votes seront effacés.` : 'Le tableau est déjà vide.') +
-    (deleteVoters ? `\n\nLes ${state.voters.length} liens de procuration seront SUPPRIMÉS.` : '\n\nLes liens de procuration sont conservés.') +
-    '\n\nAs-tu exporté le PDF ? Continuer ?';
+    (n ? t('a.newAgConfirmQ', { n, t: title }) : t('a.newAgConfirmEmpty')) +
+    '\n\n' + (deleteVoters ? t('a.newAgConfirmDelVoters', { n: state.voters.length }) : t('a.newAgConfirmKeepVoters')) +
+    '\n\n' + t('a.newAgConfirmEnd');
   if (!confirm(msg)) return;
-  await withBusy($('new-session-btn'), 'Archivage…', async () => {
+  await withBusy($('new-session-btn'), t('a.archiving'), async () => {
     const res = await api('/api/session/new', { method: 'POST', body: { title, deleteVoters }, auth: true });
     state.finalResults = {};
     state.voteCounts = {};
     $('archive-title').value = '';
     $('delete-voters').checked = false;
     await Promise.all([refreshQuestions(), refreshVoters(), refreshArchives()]);
-    toast(res.archiveId ? `Archivée : ${res.archivedQuestions} questions. Nouvelle AG prête.` : 'Nouvelle AG prête.');
+    toast(res.archiveId ? t('a.newAgDone', { n: res.archivedQuestions }) : t('a.newAgDoneEmpty'));
   });
 });
 
 async function refreshArchives() {
   state.archives = await api('/api/archives', { auth: true });
+  renderArchives();
+}
+
+function renderArchives() {
   const list = $('archives-list');
   list.innerHTML = '';
   if (!state.archives.length) {
-    list.innerHTML = '<p class="muted" style="margin: 0;">Aucune archive pour l\'instant. Elles apparaissent ici après « Nouvelle AG ».</p>';
+    list.innerHTML = `<p class="muted" style="margin: 0;">${escapeHtml(t('a.archivesNone'))}</p>`;
     return;
   }
   for (const a of state.archives) {
     const row = document.createElement('div');
     row.className = 'row-item';
-    const date = new Date(a.createdAt).toLocaleString('fr-CH', { dateStyle: 'medium', timeStyle: 'short' });
-    row.innerHTML = `<div class="info"><b>${escapeHtml(a.title)}</b><span>${a.questionCount} questions · archivée le ${escapeHtml(date)}</span></div>`;
+    const date = new Date(a.createdAt).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' });
+    row.innerHTML = `<div class="info"><b>${escapeHtml(a.title)}</b><span>${escapeHtml(t('a.archiveLine', { n: a.questionCount, d: date }))}</span></div>`;
     const actions = document.createElement('div');
     actions.className = 'btn-row';
     const load = () => api(`/api/archives/${a.id}`, { auth: true });
-    actions.appendChild(makeButton('PDF', 'btn btn-sm', (e) => withBusy(e.currentTarget, '…', async () => { const d = await load(); exportPdf(d.questions, d.title, `resultats-${slug(d.title)}.pdf`); })));
-    actions.appendChild(makeButton('CSV', 'btn btn-sm', (e) => withBusy(e.currentTarget, '…', async () => { const d = await load(); exportCsv(d.questions, `resultats-${slug(d.title)}.csv`); })));
+    actions.appendChild(makeButton('PDF', 'btn btn-sm', (e) => withBusy(e.currentTarget, '…', async () => { const d = await load(); exportPdf(d.questions, d.title, fileName(d.title, 'pdf')); })));
+    actions.appendChild(makeButton('CSV', 'btn btn-sm', (e) => withBusy(e.currentTarget, '…', async () => { const d = await load(); exportCsv(d.questions, fileName(d.title, 'csv')); })));
     row.appendChild(actions);
     list.appendChild(row);
   }
@@ -861,10 +885,14 @@ function connectSocket() {
   state.socket = socket;
 
   socket.on('connect', () => {
-    setStatus($('connection-status'), true, 'En direct');
+    state.online = true;
+    renderStatus();
     refreshQuestions().catch(() => {});
   });
-  socket.on('disconnect', () => setStatus($('connection-status'), false, 'Reconnexion…'));
+  socket.on('disconnect', () => {
+    state.online = false;
+    renderStatus();
+  });
 
   socket.on('questions:changed', () => refreshQuestions().catch(() => {}));
 
@@ -908,8 +936,30 @@ function connectSocket() {
   });
 }
 
+function renderStatus() {
+  const el = $('connection-status');
+  if (state.online === null) setStatus(el, false, t('status.connecting'));
+  else setStatus(el, state.online, t(state.online ? 'status.live' : 'status.reconnecting'));
+}
+
+// ---------- language ----------
+
+onLang(() => {
+  document.title = t('a.pageTitle');
+  renderStatus();
+  renderFormLabels();
+  updateCreateVoterLabel();
+  renderAll();
+  renderVoters();
+  renderArchives();
+});
+
 // ---------- start ----------
 
+document.querySelectorAll('.js-lang-switch').forEach(mountLangSwitch);
+document.title = t('a.pageTitle');
+renderStatus();
+renderFormLabels();
 resetOptionsList();
 resetProxyForm();
 if (state.pin) enterDashboard();

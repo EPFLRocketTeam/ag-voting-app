@@ -10,6 +10,66 @@ window.AG = (() => {
 
   const choicesOf = (q) => (q.type === 'standard' ? STANDARD_CHOICES : q.options || []);
 
+  // ---------- i18n (strings live in i18n.js) ----------
+  const DICT = window.AG_I18N || { fr: {}, en: {} };
+  const LANGS = ['fr', 'en'];
+  let lang = (() => {
+    try {
+      const saved = localStorage.getItem('agLang');
+      if (LANGS.includes(saved)) return saved;
+    } catch { /* storage blocked */ }
+    return (navigator.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en';
+  })();
+  const langListeners = new Set();
+  const getLang = () => lang;
+  const locale = () => (lang === 'fr' ? 'fr-CH' : 'en-GB');
+  const fmt = (str, vars) => String(str).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? vars[k] : m));
+  function t(key, vars, l = lang) {
+    const s = (DICT[l] && DICT[l][key]) ?? DICT.fr[key] ?? key;
+    return fmt(s, vars);
+  }
+  // Both languages at once (projector): "Oui · Yes".
+  function tb(key, vars) {
+    const a = t(key, vars, 'fr');
+    const b = t(key, vars, 'en');
+    return a === b ? a : `${a} · ${b}`;
+  }
+  // Standard choices get a translated label; custom options are shown as typed.
+  function choiceLabel(c, bilingual = false) {
+    const k = `choice.${c}`;
+    if (!DICT.fr[k]) return c;
+    return bilingual ? tb(k) : t(k);
+  }
+  function applyI18n(root = document) {
+    root.querySelectorAll('[data-i18n]').forEach((e) => (e.textContent = t(e.dataset.i18n)));
+    root.querySelectorAll('[data-i18n-html]').forEach((e) => (e.innerHTML = t(e.dataset.i18nHtml)));
+    root.querySelectorAll('[data-i18n-ph]').forEach((e) => (e.placeholder = t(e.dataset.i18nPh)));
+    root.querySelectorAll('[data-i18n-title]').forEach((e) => (e.title = t(e.dataset.i18nTitle)));
+    document.documentElement.lang = lang;
+    document.querySelectorAll('.lang-switch button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+  }
+  function setLang(l) {
+    if (!LANGS.includes(l) || l === lang) return;
+    lang = l;
+    try { localStorage.setItem('agLang', l); } catch { /* ignore */ }
+    applyI18n();
+    langListeners.forEach((fn) => fn(l));
+  }
+  const onLang = (fn) => langListeners.add(fn);
+  function mountLangSwitch(container) {
+    container.classList.add('lang-switch');
+    container.setAttribute('role', 'group');
+    container.setAttribute('aria-label', 'Langue / Language');
+    container.innerHTML = LANGS.map((l) => `<button type="button" data-lang="${l}">${l.toUpperCase()}</button>`).join('');
+    container.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-lang]');
+      if (b) setLang(b.dataset.lang);
+    });
+    applyI18n();
+  }
+  // Server messages are French; known ones get an English version.
+  const trError = (msg) => (lang === 'en' && window.AG_SERVER_ERRORS_EN && window.AG_SERVER_ERRORS_EN[msg]) || msg;
+
   async function api(path, { method = 'GET', body, pin } = {}) {
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -17,7 +77,7 @@ window.AG = (() => {
     const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
     const data = res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) {
-      const err = new Error((data && data.error) || `Échec de la requête (${res.status})`);
+      const err = new Error(trError((data && data.error) || `Request failed (${res.status})`));
       err.status = res.status;
       throw err;
     }
@@ -65,7 +125,9 @@ window.AG = (() => {
 
   // ---------- results: donut + bars ----------
   // `animate`: start empty, then grow on the next frame (used for reveals).
-  function resultsBlock(question, tally, total, { donut = true, animate = false } = {}) {
+  // `bilingual`: labels in both languages (projector).
+  function resultsBlock(question, tally, total, { donut = true, animate = false, bilingual = false } = {}) {
+    const L = (key, vars) => (bilingual ? tb(key, vars) : t(key, vars));
     tally = tally || {};
     total = total || 0;
     const choices = choicesOf(question);
@@ -93,7 +155,7 @@ window.AG = (() => {
         offset += len;
       });
       svg += '</svg>';
-      d.innerHTML = `${svg}<div class="donut-center"><b>${total}</b><span>voix</span></div>`;
+      d.innerHTML = `${svg}<div class="donut-center"><b>${total}</b><span>${escapeHtml(L('results.votes'))}</span></div>`;
       wrap.appendChild(d);
     }
 
@@ -107,14 +169,14 @@ window.AG = (() => {
       const row = document.createElement('div');
       row.className = 'bar-row' + (c === winner ? ' winner' : '');
       row.innerHTML =
-        `<div class="bar-label"><span class="name"><i style="background:${color(i)}"></i>${escapeHtml(c)}</span>` +
+        `<div class="bar-label"><span class="name" data-badge="${escapeHtml(L('results.majority'))}"><i style="background:${color(i)}"></i>${escapeHtml(choiceLabel(c, bilingual))}</span>` +
         `<span class="val">${count} · ${pct}%</span></div>` +
         `<div class="bar-track"><div class="bar-fill" style="background:${color(i)};width:${animate ? 0 : pct}%"></div></div>`;
       bars.appendChild(row);
     });
     const tot = document.createElement('div');
     tot.className = 'results-total';
-    tot.textContent = `${total} voix exprimée${total > 1 ? 's' : ''}`;
+    tot.textContent = L(total === 1 ? 'results.total1' : 'results.total', { n: total });
     bars.appendChild(tot);
     wrap.appendChild(bars);
 
@@ -147,12 +209,12 @@ window.AG = (() => {
     t._h = setTimeout(() => t.classList.remove('show'), 2200);
   }
 
-  async function copy(text, okMessage = 'Lien copié') {
+  async function copy(text, okMessage) {
     try {
       await navigator.clipboard.writeText(text);
-      toast(okMessage);
+      toast(okMessage || t('copy.done'));
     } catch {
-      prompt('Copie ce lien :', text);
+      prompt(t('copy.prompt'), text);
     }
   }
 
@@ -162,5 +224,5 @@ window.AG = (() => {
     elem.textContent = text;
   }
 
-  return { STANDARD_CHOICES, color, choicesOf, api, escapeHtml, withEndsAt, remainingMs, fmtClock, paintCountdown, onTick, resultsBlock, toast, copy, setStatus };
+  return { STANDARD_CHOICES, color, choicesOf, t, tb, choiceLabel, getLang, locale, setLang, onLang, applyI18n, mountLangSwitch, trError, api, escapeHtml, withEndsAt, remainingMs, fmtClock, paintCountdown, onTick, resultsBlock, toast, copy, setStatus };
 })();
